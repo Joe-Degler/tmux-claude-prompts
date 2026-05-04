@@ -1,0 +1,9 @@
+{"display":"/init what should the schema look like","project":"/opt/development/tmux-claude-prompts","timestamp":1714780000000,"pastedContents":{}}
+{"display":"/init what should the schema look like","project":"/opt/development/tmux-claude-prompts","timestamp":1714780500000,"pastedContents":{}}
+{"display":"Fix the auth middleware so tokens refresh before expiry","project":"/opt/development/api-service","timestamp":1714770000000,"pastedContents":{}}
+{"display":"[Pasted text #1 +3 lines]","project":"/opt/development/api-service","timestamp":1714760000000,"pastedContents":{"1":{"id":1,"type":"text","content":"def refresh_token():\n    raise NotImplementedError\n# TODO: handle clock skew"}}}
+{"display":"","project":"/opt/development/api-service","timestamp":1714750000000,"pastedContents":{}}
+{"display":"Update zsh aliases\nAlso check brew shellenv\nRun shellcheck on .zshrc","project":"/home/joedegler/dotfiles","timestamp":1714740000000,"pastedContents":{}}
+{"display":"profile cloudflare workers cold start","project":"/opt/development/playbook-cloudflare-workers","timestamp":1714730000000,"pastedContents":{}}
+{"display":"Profile Cloudflare Workers Cold Start","project":"/opt/development/playbook","timestamp":1714720000000,"pastedContents":{}}
+{"display":"Look at this:\n[Pasted text #1 +5 lines]\nand also [Pasted text #2 +2 lines]","project":"/opt/development/playbook","timestamp":1714710000000,"pastedContents":{"1":{"id":1,"type":"text","content":"line a\nline b\nline c\nline d\nline e"},"2":{"id":2,"type":"text","content":"err: ENOENT\nerr: ETIMEDOUT"}}}

@@ -1,0 +1,15 @@
+# Local debugging scratch
+tmp/
+
+# OS / editor noise
+.DS_Store
+*.swp
+*~
+
+# Local SQLite DBs (these belong under XDG_DATA_HOME, not in the repo)
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Test artifacts
+/tmp/cp_*

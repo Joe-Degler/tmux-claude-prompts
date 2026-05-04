@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# claude-prompts — dispatcher CLI for tmux-claude-prompts.
+# Subcommands: open, ingest, pin, scope, query, insert, version, help.
+
+set -euo pipefail
+IFS=$'\n\t'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../scripts" && pwd)"
+VERSION="0.1.0"
+
+usage() {
+  cat >&2 <<'EOF'
+claude-prompts — Claude Prompt Browser
+
+Usage:
+  claude-prompts open                        Launch popup (tmux) or standalone fzf
+  claude-prompts ingest [--force]            Incremental (or full) re-ingest from history.jsonl
+  claude-prompts pin <id>                    Toggle pin on a prompt row
+  claude-prompts scope <toggle|get|set <path>>  Manage scope (everywhere vs project)
+  claude-prompts case  <toggle|get|set <mode>>  Manage case sensitivity (insensitive | sensitive)
+  claude-prompts query <q>                   Emit raw fzf rows for query (debug)
+  claude-prompts insert <paste|paste-literal|copy> <id>  Apply insert action
+  claude-prompts version                     Print version
+  claude-prompts help                        Show this message
+
+Popup keymap:
+  Enter      Insert resolved prompt into originating pane
+  Ctrl-L     Insert literal (markers unresolved)
+  Ctrl-O     Copy resolved prompt to clipboard
+  Ctrl-P     Toggle pin on selected row
+  Ctrl-S     Toggle scope (Everywhere <-> Project)
+  Ctrl-T     Toggle case sensitivity (Aa chip dim = insensitive, cyan = sensitive)
+  Ctrl-D     Delete row from local store
+  Ctrl-R     Force re-ingest from history.jsonl
+  ?          Toggle preview pane
+  Esc        Close popup
+EOF
+}
+
+subcmd="${1:-}"
+
+case "$subcmd" in
+  open)
+    if [ -n "${TMUX:-}" ]; then
+      exec "${SCRIPT_DIR}/launch.sh" "${TMUX_PANE:-}" "${PWD}"
+    else
+      # Standalone mode: run fzf directly in this terminal; inserts fall back to clipboard
+      export ORIG_PANE=""
+      export ORIG_PATH="${PWD}"
+      export CP_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+      exec "${SCRIPT_DIR}/popup.sh"
+    fi
+    ;;
+
+  ingest)
+    shift
+    exec "${SCRIPT_DIR}/ingest.sh" "$@"
+    ;;
+
+  pin)
+    id="${2:-}"
+    if [ -z "$id" ]; then
+      printf 'claude-prompts pin: missing <id>\n' >&2
+      usage
+      exit 1
+    fi
+    exec "${SCRIPT_DIR}/pin.sh" "$id"
+    ;;
+
+  scope)
+    shift
+    exec "${SCRIPT_DIR}/scope.sh" "$@"
+    ;;
+
+  case)
+    shift
+    exec "${SCRIPT_DIR}/case.sh" "$@"
+    ;;
+
+  query)
+    q="${2:-}"
+    exec "${SCRIPT_DIR}/query.sh" "$q"
+    ;;
+
+  insert)
+    action="${2:-}"
+    id="${3:-}"
+    if [ -z "$action" ] || [ -z "$id" ]; then
+      printf 'claude-prompts insert: usage: insert <paste|paste-literal|copy> <id>\n' >&2
+      usage
+      exit 1
+    fi
+    exec "${SCRIPT_DIR}/insert.sh" "$action" "$id"
+    ;;
+
+  version)
+    printf 'claude-prompts %s\n' "$VERSION"
+    ;;
+
+  help|-h|--help)
+    usage
+    exit 0
+    ;;
+
+  "")
+    usage
+    exit 1
+    ;;
+
+  *)
+    printf 'claude-prompts: unknown subcommand: %s\n' "$subcmd" >&2
+    usage
+    exit 1
+    ;;
+esac

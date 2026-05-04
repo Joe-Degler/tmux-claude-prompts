@@ -1,0 +1,246 @@
+#!/usr/bin/env bash
+# query.sh — emit fzf-formatted rows for a given query string.
+# Usage: query.sh "<query string>"
+# Output: <id>\x1f<ANSI-rendered-line>\n per row.
+# Reads scope from $CP_SCOPE_FILE (default: everywhere).
+# Reads $ORIG_PATH for project chip when scope is everywhere.
+
+set -euo pipefail
+IFS=$'\n\t'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "${SCRIPT_DIR}/glyphs.sh"
+
+require_dep sqlite3
+
+Q="${1:-}"
+
+# --- Read scope ---
+scope="everywhere"
+if [ -f "$CP_SCOPE_FILE" ]; then
+  scope="$(cat "$CP_SCOPE_FILE")"
+fi
+[ -z "$scope" ] && scope="everywhere"
+
+if [ "$scope" = "everywhere" ]; then
+  proj_filter=""
+else
+  proj_filter="$scope"
+fi
+
+# --- Read case-sensitivity mode (default: insensitive) ---
+case_mode="insensitive"
+if [ -f "$CP_CASE_FILE" ]; then
+  case_mode="$(cat "$CP_CASE_FILE")"
+fi
+[ -z "$case_mode" ] && case_mode="insensitive"
+
+# --- ANSI constants (precomputed; no per-row subshell) ---
+ESC=$'\033'
+RESET="${ESC}[0m"
+_open() {  # build once: returns "\e[38;5;<code>m"
+  local code="$1"
+  if [ -z "$code" ]; then
+    printf ''
+  else
+    printf '%s[38;5;%sm' "$ESC" "$code"
+  fi
+}
+ANSI_PIN_ON="$(_open "${GLYPH_COLOR[pin_on]}")${GLYPHS[pin_on]}${RESET}"
+ANSI_HOT="$(_open "${GLYPH_COLOR[hot]}")${GLYPHS[hot]}${RESET}"
+ANSI_WARM="$(_open "${GLYPH_COLOR[warm]}")${GLYPHS[warm]}${RESET}"
+ANSI_PROJ_OPEN="$(_open "${GLYPH_COLOR[proj]}")"
+
+# --- Time constants (milliseconds) ---
+NOW_MS="$(now_ms)"
+ONE_DAY_MS=86400000
+SEVEN_DAYS_MS=604800000
+
+# --- Build FTS query (only used in case-insensitive mode) ---
+fts_query=""
+use_fts=0
+use_like=0
+use_sensitive=0
+
+if [ -n "$Q" ]; then
+  if [ "$case_mode" = "sensitive" ]; then
+    # Case-sensitive: skip FTS (its tokenizer normalizes case) and use instr().
+    use_sensitive=1
+  else
+    # Sanitize: keep only alnum, underscore, hyphen; split on whitespace
+    # Build FTS query tokens: each token appended with *
+    fts_parts=()
+    for token in $Q; do
+      # Strip chars that aren't alnum, _, -
+      clean="$(printf '%s' "$token" | tr -cd 'a-zA-Z0-9_-')"
+      if [ -n "$clean" ]; then
+        fts_parts+=("${clean}*")
+      fi
+    done
+
+    if [ "${#fts_parts[@]}" -gt 0 ]; then
+      # AND-join the tokens
+      fts_query="${fts_parts[0]}"
+      for i in "${!fts_parts[@]}"; do
+        [ "$i" -eq 0 ] && continue
+        fts_query="${fts_query} AND ${fts_parts[$i]}"
+      done
+      use_fts=1
+    else
+      # Symbols-only query → LIKE fallback
+      use_like=1
+    fi
+  fi
+fi
+
+# --- SQL query runner ---
+# Returns rows as: id<RS>display<RS>project<RS>ts<RS>pinned, RS = 0x1e.
+# Pipe ('|') is unsafe because display can contain literal pipes (markdown tables).
+RS=$'\x1e'
+run_sql() {
+  local sql_file="$1"
+  sqlite3 -bail -separator "$RS" \
+    -cmd ".timeout 3000" \
+    "$CP_DB" < "$sql_file" 2>/dev/null
+}
+
+# Build the scope filter expression (shared by all queries)
+sq_proj="$(sql_quote "$proj_filter")"
+sq_q=""
+sq_now="$NOW_MS"
+
+# Write SQL to temp file (avoids argument-length issues with large queries)
+sql_tmp="$(mktemp /tmp/cp_query_XXXXXX.sql)"
+trap 'rm -f "$sql_tmp"' EXIT
+
+if [ -z "$Q" ]; then
+  # BROWSE query
+  cat > "$sql_tmp" <<SQL
+SELECT id, COALESCE(NULLIF(display_preview, ''), display) AS display, project, ts, pinned
+FROM prompts
+WHERE (${sq_proj} = '' OR project = ${sq_proj})
+ORDER BY pinned DESC, ts DESC
+LIMIT 500;
+SQL
+  rows="$(run_sql "$sql_tmp")"
+
+elif [ "$use_sensitive" -eq 1 ]; then
+  # Case-sensitive: AND-join token-level instr() checks against display_full
+  # and paste_contents.content. instr() is byte-wise (case-sensitive in SQLite).
+  where_parts=()
+  for token in $Q; do
+    [ -z "$token" ] && continue
+    sq_tk="$(sql_quote "$token")"
+    where_parts+=("(instr(display_full, ${sq_tk}) > 0 OR id IN (SELECT prompt_id FROM paste_contents WHERE instr(content, ${sq_tk}) > 0))")
+  done
+  if [ "${#where_parts[@]}" -eq 0 ]; then
+    # Whitespace-only query — fall through to BROWSE behaviour.
+    cat > "$sql_tmp" <<SQL
+SELECT id, COALESCE(NULLIF(display_preview, ''), display) AS display, project, ts, pinned
+FROM prompts
+WHERE (${sq_proj} = '' OR project = ${sq_proj})
+ORDER BY pinned DESC, ts DESC
+LIMIT 500;
+SQL
+  else
+    where_clause="${where_parts[0]}"
+    for i in "${!where_parts[@]}"; do
+      [ "$i" -eq 0 ] && continue
+      where_clause="${where_clause} AND ${where_parts[$i]}"
+    done
+    cat > "$sql_tmp" <<SQL
+SELECT id, COALESCE(NULLIF(display_preview, ''), display) AS display, project, ts, pinned
+FROM prompts
+WHERE ${where_clause}
+  AND (${sq_proj} = '' OR project = ${sq_proj})
+ORDER BY pinned DESC, ts DESC
+LIMIT 200;
+SQL
+  fi
+  rows="$(run_sql "$sql_tmp")"
+
+elif [ "$use_fts" -eq 1 ]; then
+  # FTS query — sort recent-first to match BROWSE/LIKE/sensitive paths.
+  sq_q="$(sql_quote "$fts_query")"
+  cat > "$sql_tmp" <<SQL
+SELECT p.id, COALESCE(NULLIF(p.display_preview, ''), p.display) AS display, p.project, p.ts, p.pinned
+FROM prompts_fts f JOIN prompts p ON p.id = f.rowid
+WHERE prompts_fts MATCH ${sq_q}
+  AND (${sq_proj} = '' OR p.project = ${sq_proj})
+ORDER BY p.pinned DESC, p.ts DESC
+LIMIT 200;
+SQL
+  rows="$(run_sql "$sql_tmp")"
+  # Check if FTS returned any rows; if empty fall back to LIKE
+  if [ -z "$rows" ]; then
+    use_like=1
+  fi
+fi
+
+if [ "${use_like:-0}" -eq 1 ]; then
+  # LIKE fallback
+  sq_like="$(sql_quote "%${Q}%")"
+  cat > "$sql_tmp" <<SQL
+SELECT id, COALESCE(NULLIF(display_preview, ''), display) AS display, project, ts, pinned
+FROM prompts
+WHERE display LIKE ${sq_like}
+  AND (${sq_proj} = '' OR project = ${sq_proj})
+ORDER BY pinned DESC, ts DESC
+LIMIT 200;
+SQL
+  rows="$(run_sql "$sql_tmp")"
+fi
+
+[ -z "${rows:-}" ] && exit 0
+
+# --- Format each row (hot path: avoid subshells) ---
+PIN_OFF="${GLYPHS[pin_off]}"
+COLD="${GLYPHS[cold]}"
+TRUNC="${GLYPHS[trunc]}"
+EMPTY_CHIP="                "
+SHOW_CHIP=0
+[ "$scope" = "everywhere" ] && SHOW_CHIP=1
+
+while IFS="$RS" read -r id display project ts pinned; do
+  [ -z "$id" ] && continue
+
+  if [ "${pinned:-0}" = "1" ]; then
+    pin_str="$ANSI_PIN_ON"
+  else
+    pin_str="$PIN_OFF"
+  fi
+
+  age_ms=$(( NOW_MS - ts ))
+  if [ "$age_ms" -lt "$ONE_DAY_MS" ]; then
+    rec_str="$ANSI_HOT"
+  elif [ "$age_ms" -lt "$SEVEN_DAYS_MS" ]; then
+    rec_str="$ANSI_WARM"
+  else
+    rec_str="$COLD"
+  fi
+
+  if [ "$SHOW_CHIP" -eq 1 ]; then
+    if [ -n "$project" ]; then
+      chip_name="${project##*/}"               # basename via parameter expansion
+      if [ "${#chip_name}" -gt 14 ]; then
+        chip_name="${chip_name:0:14}"
+      else
+        # Right-pad to 14 chars (parameter expansion, no loop)
+        chip_name="${chip_name}              "
+        chip_name="${chip_name:0:14}"
+      fi
+      chip_str="${ANSI_PROJ_OPEN}${chip_name}${RESET}  "
+    else
+      chip_str="$EMPTY_CHIP"
+    fi
+  else
+    chip_str=""
+  fi
+
+  disp="$display"
+  if [ "${#disp}" -gt 500 ]; then
+    disp="${disp:0:500}${TRUNC}"
+  fi
+
+  printf '%s\x1f%s %s %s%s\n' "$id" "$pin_str" "$rec_str" "$chip_str" "$disp"
+done <<< "$rows"
