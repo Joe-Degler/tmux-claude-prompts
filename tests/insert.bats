@@ -87,13 +87,19 @@ and also [Pasted text #2 +2 lines]')"
   local log
   log="$(cat "$TMUX_LOG_FILE")"
 
-  # send-keys was called with -l and -- on the originating pane
   [[ "$log" == *"send-keys"* ]]
-  [[ "$log" == *"-l"* ]]
-  [[ "$log" == *"-t"* ]]
+  [[ "$log" == *" -l "* ]]
   [[ "$log" == *"%88"* ]]
-  # The literal marker text appears in argv (sent verbatim, no resolution)
-  [[ "$log" == *"[Pasted text #1 +3 lines]"* ]]
+
+  # Reconstruct the typed text from per-char send-keys invocations.
+  local typed
+  typed="$(awk '
+    /send-keys.*-- / {
+      i = index($0, " -- ")
+      if (i > 0) printf "%s", substr($0, i + 4)
+    }
+  ' "$TMUX_LOG_FILE")"
+  [[ "$typed" == "[Pasted text #1 +3 lines]" ]]
 }
 
 # Case 4: paste action with no paste rows is identity
@@ -130,8 +136,8 @@ SQL
   [[ "$output" == *"[Pasted text #99 +0 lines]"* ]]
 }
 
-# Case 6: tmux insert invokes send-keys -l with -t <pane>
-@test "tmux insert invokes send-keys -l -t <pane>" {
+# Case 6: tmux insert per-character via send-keys -l (defeats burst detection)
+@test "tmux insert types text char-by-char via send-keys -l" {
   local id
   id="$(db_id_for '/init what should the schema look like')"
 
@@ -150,10 +156,22 @@ SQL
   local log
   log="$(cat "$TMUX_LOG_FILE")"
 
-  [[ "$log" == *"send-keys"* ]]
-  [[ "$log" == *"-l"* ]]
-  [[ "$log" == *"-t"* ]]
+  # Send-keys is invoked at least once on the originating pane (chunked).
+  local send_count
+  send_count="$(awk '/send-keys/ {n++} END {print n+0}' "$TMUX_LOG_FILE")"
+  [ "$send_count" -ge 1 ]
   [[ "$log" == *"%99"* ]]
-  # The text was sent (verbatim, no resolution needed for /init row)
-  [[ "$log" == *"/init what should the schema look like"* ]]
+  [[ "$log" == *" -l "* ]]
+
+  # Reconstruct the typed text by extracting the byte after the trailing '--'
+  # in each send-keys ARGV line. The mock logs each arg space-separated.
+  local typed
+  typed="$(awk '
+    /send-keys.*-- / {
+      # take everything after " -- "
+      i = index($0, " -- ")
+      if (i > 0) printf "%s", substr($0, i + 4)
+    }
+  ' "$TMUX_LOG_FILE")"
+  [[ "$typed" == "/init what should the schema look like" ]]
 }

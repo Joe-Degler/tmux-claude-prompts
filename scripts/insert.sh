@@ -50,11 +50,20 @@ fi
 do_clipboard=0
 if [ "$action" = "paste" ] || [ "$action" = "paste-literal" ]; then
   if [ -n "${TMUX:-}" ] && [ -n "${ORIG_PANE:-}" ]; then
-    # Type the text literally so Claude's TUI shows it in the input box (no
-    # bracketed-paste placeholder). Each newline is preceded by a backslash
-    # so Claude treats it as "continue input" rather than "submit".
-    escaped="${text//$'\n'/\\$'\n'}"
-    tmux send-keys -t "$ORIG_PANE" -l -- "$escaped"
+    # Send the text so Claude's TUI sees typed input (not a paste).
+    # The heuristic that flips Claude into "[Pasted text]" mode is
+    # roughly "a single pty read() returned bytes containing a newline
+    # mid-stream". So we just split on \n: send each line as one write,
+    # send each newline as its own write. No size threshold matters as
+    # long as no chunk mixes text and \n.
+    remaining="$text"
+    while [[ "$remaining" == *$'\n'* ]]; do
+      line="${remaining%%$'\n'*}"
+      [ -n "$line" ] && tmux send-keys -t "$ORIG_PANE" -l -- "$line"
+      tmux send-keys -t "$ORIG_PANE" -l -- $'\n'
+      remaining="${remaining#*$'\n'}"
+    done
+    [ -n "$remaining" ] && tmux send-keys -t "$ORIG_PANE" -l -- "$remaining"
     if [ "$action" = "paste" ] && [ "$unmatched_markers" -eq 1 ]; then
       tmux display-message -d 3000 -t "$ORIG_PANE" \
         'claude-prompts: paste markers had no stored content — inserted as-is' 2>/dev/null || true
