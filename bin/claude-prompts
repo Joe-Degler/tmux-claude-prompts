@@ -29,11 +29,12 @@ Popup keymap:
   Ctrl-O     Copy resolved prompt to clipboard
   Ctrl-P     Toggle pin on selected row
   Ctrl-S     Toggle scope (Everywhere <-> Project)
+  Shift-←/→  Cycle through all scopes (Everywhere + every project, by recency)
   Ctrl-T     Toggle case sensitivity (Aa chip dim = insensitive, cyan = sensitive)
   Ctrl-D     Delete row from local store
   Ctrl-R     Force re-ingest from history.jsonl
   ?          Toggle preview pane
-  Esc        Close popup
+  Esc / ^Q   Close popup (use ^Q if tmux escape-time delays Esc)
 EOF
 }
 

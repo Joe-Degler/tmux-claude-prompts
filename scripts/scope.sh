@@ -4,6 +4,9 @@
 #   scope.sh get              — print current scope
 #   scope.sh set <path>       — set scope to <path> (must be absolute) or "everywhere"
 #   scope.sh toggle           — flip between everywhere and $ORIG_PATH/$PWD
+#   scope.sh list             — print ordered scope list (one per line)
+#   scope.sh next             — cycle to next scope in list (wraps)
+#   scope.sh prev             — cycle to previous scope in list (wraps)
 # Exit codes: 0 success, 1 invalid usage.
 
 set -euo pipefail
@@ -77,6 +80,40 @@ case "$cmd" in
     else
       write_scope "everywhere"
     fi
+    ;;
+
+  list)
+    # Ordered scope list: "everywhere" first, then each distinct project
+    # ordered by most-recent prompt timestamp. Used by next/prev cycling
+    # and by header.sh to render the chip strip.
+    printf 'everywhere\n'
+    sqlite3 -cmd ".timeout 3000" "$CP_DB" \
+      "SELECT project FROM prompts WHERE project IS NOT NULL AND project <> '' GROUP BY project ORDER BY MAX(ts) DESC;" \
+      2>/dev/null || true
+    ;;
+
+  next|prev)
+    current="$(read_scope)"
+    mapfile -t scopes < <("$0" list)
+    total=${#scopes[@]}
+    if [ "$total" -eq 0 ]; then
+      exit 0
+    fi
+    idx=-1
+    for i in "${!scopes[@]}"; do
+      if [ "${scopes[$i]}" = "$current" ]; then
+        idx="$i"
+        break
+      fi
+    done
+    if [ "$idx" -lt 0 ]; then
+      idx=0
+    elif [ "$cmd" = "next" ]; then
+      idx=$(( (idx + 1) % total ))
+    else
+      idx=$(( (idx - 1 + total) % total ))
+    fi
+    write_scope "${scopes[$idx]}"
     ;;
 
   *)

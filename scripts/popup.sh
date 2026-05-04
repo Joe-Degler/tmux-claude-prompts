@@ -64,8 +64,11 @@ exec fzf \
   --bind="ctrl-o:execute-silent($CP_SCRIPTS/insert.sh copy {1})+abort" \
   --bind="ctrl-p:execute-silent($CP_SCRIPTS/pin.sh {1})+reload($CP_SCRIPTS/query.sh {q})" \
   --bind="ctrl-s:execute-silent($CP_SCRIPTS/scope.sh toggle)+reload($CP_SCRIPTS/query.sh {q})+transform-header($CP_SCRIPTS/header.sh)" \
+  --bind="shift-left:execute-silent($CP_SCRIPTS/scope.sh prev)+reload($CP_SCRIPTS/query.sh {q})+transform-header($CP_SCRIPTS/header.sh)" \
+  --bind="shift-right:execute-silent($CP_SCRIPTS/scope.sh next)+reload($CP_SCRIPTS/query.sh {q})+transform-header($CP_SCRIPTS/header.sh)" \
   --bind="ctrl-t:execute-silent($CP_SCRIPTS/case.sh toggle)+reload($CP_SCRIPTS/query.sh {q})+transform-header($CP_SCRIPTS/header.sh)" \
   --bind="ctrl-d:execute-silent($CP_SCRIPTS/delete.sh {1})+reload($CP_SCRIPTS/query.sh {q})" \
   --bind="ctrl-r:execute-silent($CP_SCRIPTS/ingest.sh --force)+reload($CP_SCRIPTS/query.sh {q})+transform-header($CP_SCRIPTS/header.sh)" \
   --bind="?:toggle-preview" \
-  --bind="esc:abort"
+  --bind="esc:abort" \
+  --bind="ctrl-q:abort"
