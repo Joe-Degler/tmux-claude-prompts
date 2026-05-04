@@ -56,7 +56,7 @@ exec fzf \
   --header="${INITIAL_HEADER}" \
   --header-first \
   --preview="${CP_SCRIPTS}/preview.sh {1}" \
-  --preview-window='down:6:wrap' \
+  --preview-window='down:20%:wrap' \
   --bind="start:reload($CP_SCRIPTS/query.sh '')" \
   --bind="change:reload($CP_SCRIPTS/query.sh {q})" \
   --bind="enter:execute-silent($CP_SCRIPTS/insert.sh paste {1})+abort" \
