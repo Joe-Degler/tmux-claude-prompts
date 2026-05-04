@@ -48,7 +48,6 @@ exec fzf \
   --pointer='▶' \
   --marker='★' \
   --header="${INITIAL_HEADER}" \
-  --header-first \
   --preview="${CP_SCRIPTS}/preview.sh {1}" \
   --preview-window='down:30%:wrap' \
   --bind="start:reload($CP_SCRIPTS/query.sh '')" \
