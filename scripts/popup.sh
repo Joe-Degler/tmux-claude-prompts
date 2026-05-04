@@ -30,14 +30,8 @@ ensure_db
 # --- Incremental ingest (stderr flows to popup terminal so user sees progress) ---
 "${CP_SCRIPTS}/ingest.sh" >&2 || true
 
-# --- Prompt glyph ---
-if [ "${GLYPHS[proj]}" = ">" ]; then
-  PROMPT_STR=" > "
-else
-  PROMPT_STR="  "
-fi
-
-# --- Initial header ---
+# --- Initial prompt and header (computed once; refreshed by transform-* binds) ---
+INITIAL_PROMPT="$("${CP_SCRIPTS}/prompt.sh")"
 INITIAL_HEADER="$("${CP_SCRIPTS}/header.sh")"
 
 # --- fzf invocation (exec so this bash process is replaced) ---
@@ -50,7 +44,7 @@ exec fzf \
   --min-height=10 \
   --delimiter=$'\x1f' \
   --with-nth=2 \
-  --prompt="${PROMPT_STR}" \
+  --prompt="${INITIAL_PROMPT}" \
   --pointer='▶' \
   --marker='★' \
   --header="${INITIAL_HEADER}" \
@@ -66,7 +60,7 @@ exec fzf \
   --bind="ctrl-s:execute-silent($CP_SCRIPTS/scope.sh toggle)+reload($CP_SCRIPTS/query.sh {q})+transform-header($CP_SCRIPTS/header.sh)" \
   --bind="shift-left:execute-silent($CP_SCRIPTS/scope.sh prev)+reload($CP_SCRIPTS/query.sh {q})+transform-header($CP_SCRIPTS/header.sh)" \
   --bind="shift-right:execute-silent($CP_SCRIPTS/scope.sh next)+reload($CP_SCRIPTS/query.sh {q})+transform-header($CP_SCRIPTS/header.sh)" \
-  --bind="ctrl-t:execute-silent($CP_SCRIPTS/case.sh toggle)+reload($CP_SCRIPTS/query.sh {q})+transform-header($CP_SCRIPTS/header.sh)" \
+  --bind="ctrl-t:execute-silent($CP_SCRIPTS/case.sh toggle)+reload($CP_SCRIPTS/query.sh {q})+transform-prompt($CP_SCRIPTS/prompt.sh)" \
   --bind="ctrl-d:execute-silent($CP_SCRIPTS/delete.sh {1})+reload($CP_SCRIPTS/query.sh {q})" \
   --bind="ctrl-r:execute-silent($CP_SCRIPTS/ingest.sh --force)+reload($CP_SCRIPTS/query.sh {q})+transform-header($CP_SCRIPTS/header.sh)" \
   --bind="?:toggle-preview" \

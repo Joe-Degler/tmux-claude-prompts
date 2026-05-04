@@ -26,13 +26,6 @@ if [ -f "$CP_SCOPE_FILE" ]; then
 fi
 [ -z "$scope" ] && scope="everywhere"
 
-# --- Read case mode (default: insensitive) ---
-case_mode="insensitive"
-if [ -f "$CP_CASE_FILE" ]; then
-  case_mode="$(cat "$CP_CASE_FILE")"
-fi
-[ -z "$case_mode" ] && case_mode="insensitive"
-
 if [ "$scope" = "everywhere" ]; then
   proj_filter=""
 else
@@ -57,22 +50,15 @@ ansi() {
 
 count_str="$(ansi 244 "  ${count}")"
 
-# Case chip: dim when insensitive (default), cyan+bold when sensitive.
-if [ "$case_mode" = "sensitive" ]; then
-  case_chip="$(printf '\033[1;38;5;81m%s\033[0m' 'Aa')"
-else
-  case_chip="$(ansi 244 'Aa')"
-fi
-
 # --- Title line ---
 # In Everywhere mode, show the [Everywhere] label inline (no chip strip below).
 # In project mode, omit the label — the chip strip below shows the active scope.
 if [ "$scope" = "everywhere" ]; then
   scope_icon="$(ansi "${GLYPH_COLOR[globe]}" "${GLYPHS[globe]}")"
   scope_label="$(ansi 243 "[Everywhere]")"
-  title_line="  \033[1mClaude Prompts\033[0m   ${scope_icon} ${scope_label}${count_str}  ${case_chip}"
+  title_line="  \033[1mClaude Prompts\033[0m   ${scope_icon} ${scope_label}${count_str}"
 else
-  title_line="  \033[1mClaude Prompts\033[0m${count_str}  ${case_chip}"
+  title_line="  \033[1mClaude Prompts\033[0m${count_str}"
 fi
 printf '%b\n' "$title_line"
 
