@@ -10,6 +10,7 @@ IFS=$'\n\t'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/glyphs.sh"
+. "${SCRIPT_DIR}/render.sh"
 
 require_dep sqlite3
 
@@ -34,27 +35,6 @@ if [ -f "$CP_CASE_FILE" ]; then
   case_mode="$(cat "$CP_CASE_FILE")"
 fi
 [ -z "$case_mode" ] && case_mode="insensitive"
-
-# --- ANSI constants (precomputed; no per-row subshell) ---
-ESC=$'\033'
-RESET="${ESC}[0m"
-_open() {  # build once: returns "\e[38;5;<code>m"
-  local code="$1"
-  if [ -z "$code" ]; then
-    printf ''
-  else
-    printf '%s[38;5;%sm' "$ESC" "$code"
-  fi
-}
-ANSI_PIN_ON="$(_open "${GLYPH_COLOR[pin_on]}")${GLYPHS[pin_on]}${RESET}"
-ANSI_HOT="$(_open "${GLYPH_COLOR[hot]}")${GLYPHS[hot]}${RESET}"
-ANSI_WARM="$(_open "${GLYPH_COLOR[warm]}")${GLYPHS[warm]}${RESET}"
-ANSI_PROJ_OPEN="$(_open "${GLYPH_COLOR[proj]}")"
-
-# --- Time constants (milliseconds) ---
-NOW_MS="$(now_ms)"
-ONE_DAY_MS=86400000
-SEVEN_DAYS_MS=604800000
 
 # --- Build FTS query (only used in case-insensitive mode) ---
 fts_query=""
@@ -107,7 +87,6 @@ run_sql() {
 # Build the scope filter expression (shared by all queries)
 sq_proj="$(sql_quote "$proj_filter")"
 sq_q=""
-sq_now="$NOW_MS"
 
 # Write SQL to temp file (avoids argument-length issues with large queries)
 sql_tmp="$(mktemp /tmp/cp_query_XXXXXX.sql)"
@@ -193,54 +172,4 @@ fi
 
 [ -z "${rows:-}" ] && exit 0
 
-# --- Format each row (hot path: avoid subshells) ---
-PIN_OFF="${GLYPHS[pin_off]}"
-COLD="${GLYPHS[cold]}"
-TRUNC="${GLYPHS[trunc]}"
-EMPTY_CHIP="                "
-SHOW_CHIP=0
-[ "$scope" = "everywhere" ] && SHOW_CHIP=1
-
-while IFS="$RS" read -r id display project ts pinned; do
-  [ -z "$id" ] && continue
-
-  if [ "${pinned:-0}" = "1" ]; then
-    pin_str="$ANSI_PIN_ON"
-  else
-    pin_str="$PIN_OFF"
-  fi
-
-  age_ms=$(( NOW_MS - ts ))
-  if [ "$age_ms" -lt "$ONE_DAY_MS" ]; then
-    rec_str="$ANSI_HOT"
-  elif [ "$age_ms" -lt "$SEVEN_DAYS_MS" ]; then
-    rec_str="$ANSI_WARM"
-  else
-    rec_str="$COLD"
-  fi
-
-  if [ "$SHOW_CHIP" -eq 1 ]; then
-    if [ -n "$project" ]; then
-      chip_name="${project##*/}"               # basename via parameter expansion
-      if [ "${#chip_name}" -gt 14 ]; then
-        chip_name="${chip_name:0:14}"
-      else
-        # Right-pad to 14 chars (parameter expansion, no loop)
-        chip_name="${chip_name}              "
-        chip_name="${chip_name:0:14}"
-      fi
-      chip_str="${ANSI_PROJ_OPEN}${chip_name}${RESET}  "
-    else
-      chip_str="$EMPTY_CHIP"
-    fi
-  else
-    chip_str=""
-  fi
-
-  disp="$display"
-  if [ "${#disp}" -gt 500 ]; then
-    disp="${disp:0:500}${TRUNC}"
-  fi
-
-  printf '%s\x1f%s %s %s%s\n' "$id" "$pin_str" "$rec_str" "$chip_str" "$disp"
-done <<< "$rows"
+printf '%s\n' "$rows" | cp_render_rows

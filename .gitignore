@@ -13,3 +13,6 @@ tmp/
 
 # Test artifacts
 /tmp/cp_*
+
+# Claude Code session metadata (local lockfiles, etc.)
+.claude/

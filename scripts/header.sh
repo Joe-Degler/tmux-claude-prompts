@@ -62,6 +62,27 @@ else
 fi
 printf '%b\n' "$title_line"
 
+# --- Similar-mode banner (only when $CP_RUN_DIR/similar holds a source id) ---
+if [ -f "${CP_RUN_DIR}/similar" ]; then
+  src_id="$(cat "${CP_RUN_DIR}/similar" 2>/dev/null || true)"
+  if [ -n "$src_id" ]; then
+    sq_id="$(sql_quote "$src_id")"
+    src_preview="$(sqlite3 -cmd ".timeout 3000" "$CP_DB" \
+      "SELECT COALESCE(NULLIF(display_preview, ''), display) FROM prompts WHERE id = ${sq_id};" \
+      2>/dev/null || true)"
+    if [ -n "$src_preview" ]; then
+      # Truncate to ~ (cols - 18) so it fits next to the "~ Similar to: " label.
+      max_len=$(( cols - 18 ))
+      [ "$max_len" -lt 20 ] && max_len=20
+      if [ "${#src_preview}" -gt "$max_len" ]; then
+        src_preview="${src_preview:0:$max_len}${GLYPHS[trunc]}"
+      fi
+      banner="$(printf '\033[1;38;5;81m  ~ Similar to:\033[0m %s' "$src_preview")"
+      printf '%b\n' "$banner"
+    fi
+  fi
+fi
+
 # --- Scope chip strip (only when in project scope) ---
 if [ "$scope" != "everywhere" ]; then
   mapfile -t scopes < <("${SCRIPT_DIR}/scope.sh" list)
@@ -166,6 +187,6 @@ fi
 
 # --- Footer hint line (omit if narrow < 70 cols) ---
 if [ "${cols:-80}" -ge 70 ]; then
-  footer="\033[38;5;244m  enter insert  ^l literal  ^p pin  ^o copy  ^t case  ^s scope  S-←/→ cycle  esc/^q close\033[0m"
+  footer="\033[38;5;244m  enter insert  ^l literal  ^p pin  ^o copy  ^t case  ^s scope  S-←/→ cycle  ^/ similar  S-↑/↓ scroll  ^] expand  esc/^q close\033[0m"
   printf '%b\n' "$footer"
 fi

@@ -116,9 +116,9 @@ and also [Pasted text #2 +2 lines]')"
   [ "$output" = "$expected" ]
 }
 
-# Case 5: unmatched marker is left untouched
-@test "unmatched marker is left untouched" {
-  # Insert a synthetic row with a marker that has no matching paste row
+# Case 5: unmatched marker is replaced by [Pasted Text Lost]
+@test "unmatched marker becomes [Pasted Text Lost]" {
+  # Insert a synthetic row with a marker that has no matching paste row.
   local fake_hash="aabbccddeeff00112233445566778899aabbccdd"
   local fake_display="Check [Pasted text #99 +0 lines] for details"
   sqlite3 "$CP_DB" <<SQL
@@ -130,10 +130,11 @@ SQL
   id="$(db_query "SELECT id FROM prompts WHERE hash='${fake_hash}';")"
 
   run bash "${CP_ROOT}/scripts/resolve.sh" "$id"
-  # exit 2 signals "had unresolved markers" — caller (insert.sh) uses it to warn
+  # exit 2 still signals "had a lost paste" — caller (insert.sh) uses it to warn
   [ "$status" -eq 2 ]
-  # Marker should remain intact since no paste row with paste_id=99 exists
-  [[ "$output" == *"[Pasted text #99 +0 lines]"* ]]
+  # User must never see the raw marker; it's swapped for a friendly label.
+  [[ "$output" == *"[Pasted Text Lost]"* ]]
+  [[ "$output" != *"[Pasted text #99"* ]]
 }
 
 # Case 6: tmux insert per-character via send-keys -l (defeats burst detection)

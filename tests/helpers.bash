@@ -14,6 +14,9 @@ load_fixtures() {
   export XDG_RUNTIME_DIR="$TEST_TMP/run"
   export HOME_BACKUP="$HOME"
   export HOME="$TEST_TMP/home"
+  # Tests don't exercise the similarity feature; suppress the embedding
+  # backfill so each isolated $XDG_DATA_HOME doesn't pip-install fastembed.
+  export CP_SKIP_EMBED=1
   mkdir -p "$HOME/.claude" "$XDG_DATA_HOME" "$XDG_RUNTIME_DIR"
   cp "${BATS_TEST_DIRNAME}/fixtures/history.jsonl" "$HOME/.claude/history.jsonl"
   # Re-source paths.sh in the new HOME context so CP_* vars are fresh.
@@ -28,7 +31,7 @@ load_fixtures() {
 teardown_fixtures() {
   rm -rf "$TEST_TMP"
   export HOME="$HOME_BACKUP"
-  unset CP_PATHS_LOADED CP_HELPERS_LOADED TEST_TMP XDG_DATA_HOME XDG_RUNTIME_DIR HOME_BACKUP
+  unset CP_PATHS_LOADED CP_HELPERS_LOADED TEST_TMP XDG_DATA_HOME XDG_RUNTIME_DIR HOME_BACKUP CP_SKIP_EMBED
 }
 
 # setup_db — runs ingest.sh against the fixture into the isolated $CP_DB.

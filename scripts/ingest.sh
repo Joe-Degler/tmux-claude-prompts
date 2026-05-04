@@ -102,32 +102,37 @@ clear_pending_pastes() {
   pending_paste_type=()
 }
 
-# compute_preview <display_full> → echoes the rendered preview string.
-# Marker-only display + matching paste content → first 120 chars of the paste,
-# newlines collapsed to ' ↵ ', trailing '…' if truncated.
-# Anything else → display_full with newlines collapsed.
-compute_preview() {
-  local df="$1"
-  local trimmed pid content snippet
-  # Strip leading/trailing whitespace
-  trimmed="${df#"${df%%[![:space:]]*}"}"
-  trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
-  if [[ "$trimmed" =~ ^\[Pasted\ text\ \#([0-9]+)(\ \+[0-9]+\ lines)?\]$ ]]; then
+# resolve_display <display_full> → echoes display_full with every
+# [Pasted text #N (+M lines)?] marker replaced by the paste content from
+# pending_paste_content. Markers whose paste is missing (or has empty
+# content) become the literal string "[Pasted Text Lost]" — the user never
+# sees a raw marker.
+resolve_display() {
+  local text="$1"
+  local out="" full pid before after
+  while [[ "$text" =~ \[Pasted\ text\ \#([0-9]+)(\ \+[0-9]+\ lines)?\] ]]; do
+    full="${BASH_REMATCH[0]}"
     pid="${BASH_REMATCH[1]}"
-    content="${pending_paste_content[$pid]:-}"
-    if [ -n "$content" ]; then
-      snippet="${content:0:120}"
-      snippet="${snippet//$'\n'/ ↵ }"
-      if [ "${#content}" -gt 120 ]; then
-        snippet="${snippet}…"
-      fi
-      printf '%s' "$snippet"
-      return
+    before="${text%%"$full"*}"
+    after="${text#*"$full"}"
+    out="${out}${before}"
+    if [ -n "${pending_paste_content[$pid]:-}" ]; then
+      out="${out}${pending_paste_content[$pid]}"
+    else
+      out="${out}[Pasted Text Lost]"
     fi
-  fi
-  # Default: collapse newlines on the original display.
-  local collapsed="${df//$'\n'/ ↵ }"
-  printf '%s' "$collapsed"
+    text="$after"
+  done
+  out="${out}${text}"
+  printf '%s' "$out"
+}
+
+# compute_preview <display_full> → list-row text. Always inlines paste
+# content (so the user never sees a marker), then collapses newlines to '↵'.
+# render.sh truncates to 500 chars at display time.
+compute_preview() {
+  local resolved="$(resolve_display "$1")"
+  printf '%s' "${resolved//$'\n'/ ↵ }"
 }
 
 flush_batch() {
@@ -158,11 +163,16 @@ process_stream() {
   tail -c "+${seek_pos}" "$HISTORY_FILE" | jq -cR 'fromjson? |
     select(.display != null and .display != "") |
     ((.pastedContents // {}) | to_entries[] |
+      # Claude Code sometimes records hash-only paste references when the
+      # content is deduplicated elsewhere. Those records carry no usable
+      # body, so we skip them here — preview.sh will render the marker as
+      # "(no stored content)" rather than an empty fenced block.
+      select(.value.content != null and .value.content != "") |
       {
         kind: "paste",
         paste_id: (.key | tonumber),
         type: (.value.type // "text"),
-        content: (.value.content // "")
+        content: .value.content
       }
     ),
     {
@@ -259,3 +269,7 @@ elapsed=$((end_ms - start_ms))
 
 printf 'ingested %d new rows (%d paste rows) in %d ms\n' \
   "$prompt_count" "$paste_count" "$elapsed" >&2
+
+# Note: embedding backfill is no longer driven from ingest.sh. The popup
+# launcher fires `embed.sh kickoff &` in the background after ingest, so
+# popup open is never blocked by model load or pip install.

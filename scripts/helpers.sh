@@ -97,17 +97,28 @@ ensure_db() {
   local ver
   ver="$(sqlite3 "$CP_DB" "PRAGMA user_version;" 2>/dev/null || printf '0')"
   if [ "${ver:-0}" -eq 0 ]; then
-    # Apply schema then bump version to 2 to mark it done.
+    # Apply schema then bump version to 3 to mark it done.
     if ! sqlite3 -bail "$CP_DB" < "$schema_file" >/dev/null; then
       printf 'claude-prompts: failed to apply schema.sql\n' >&2
       exit 2
     fi
-    sqlite3 "$CP_DB" "PRAGMA user_version = 2;" >/dev/null
+    sqlite3 "$CP_DB" "PRAGMA user_version = 3;" >/dev/null
   elif [ "${ver:-0}" -eq 1 ]; then
     # Migrate v1 → v2: add display_preview column. Idempotent: ignore "duplicate" error.
     sqlite3 "$CP_DB" \
       "ALTER TABLE prompts ADD COLUMN display_preview TEXT NOT NULL DEFAULT '';" \
       >/dev/null 2>&1 || true
     sqlite3 "$CP_DB" "PRAGMA user_version = 2;" >/dev/null
+    ver=2
+  fi
+  if [ "${ver:-0}" -eq 2 ]; then
+    # v2 → v3: display_preview is now computed with paste content inlined
+    # (no raw `[Pasted text #N]` markers). Run a stdlib-only Python pass
+    # to rewrite every existing row's preview in one go — much faster
+    # than a full re-ingest and synchronous enough not to block the popup.
+    if command -v python3 >/dev/null 2>&1; then
+      CP_DB="$CP_DB" python3 "${_helpers_dir}/rebuild_previews.py" >&2 || true
+    fi
+    sqlite3 "$CP_DB" "PRAGMA user_version = 3;" >/dev/null
   fi
 }

@@ -51,7 +51,9 @@ function load_pastes(    raw, recs, n, i, rec, e1, pid, pcontent) {
     if (!e1) continue
     pid = substr(rec, 1, e1-1); pcontent = substr(rec, e1+1)
     sub(/\n$/, "", pcontent)
-    if (pid != "") pastes[pid] = pcontent
+    # Empty content = legacy hash-only ingest; treat as missing so it
+    # becomes "[Pasted Text Lost]" rather than vanishing silently.
+    if (pid != "" && pcontent != "") pastes[pid] = pcontent
   }
 }
 BEGIN {
@@ -74,7 +76,7 @@ BEGIN {
     if (match(rest, /^\[Pasted text #([0-9]+)( \+[0-9]+ lines)?\]/, m)) {
       pid = m[1]; fm = m[0]
       if (pid in pastes) new_text = new_text pastes[pid]
-      else { new_text = new_text fm; unmatched++ }
+      else { new_text = new_text "[Pasted Text Lost]"; unmatched++ }
       sf = ap + length(fm)
     } else { new_text = new_text substr(text, ap, 1); sf = ap + 1 }
   }
