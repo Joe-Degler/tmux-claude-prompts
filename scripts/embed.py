@@ -333,7 +333,7 @@ def _knn_blob(db, blob: bytes, limit: int, scope: str, exclude_id: int | None = 
         FROM knn k JOIN prompts p ON p.id = k.id
         WHERE (? = 0 OR k.id != ?)
           AND (? = '' OR p.project = ?)
-        ORDER BY k.distance
+        ORDER BY k.distance, p.ts DESC
         LIMIT ?
         """,
         (blob, k_window, excl_active, excl_id, proj_filter, proj_filter, limit),
@@ -526,7 +526,7 @@ class Daemon:
                     SELECT k.id
                     FROM knn k JOIN prompts p ON p.id = k.id
                     WHERE (? = '' OR p.project = ?)
-                    ORDER BY p.pinned DESC, k.distance
+                    ORDER BY p.pinned DESC, k.distance, p.ts DESC
                     LIMIT ?
                     """,
                     (blob, k_window, proj_filter, proj_filter, limit),
