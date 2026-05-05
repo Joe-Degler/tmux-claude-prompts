@@ -22,10 +22,16 @@ if [ -z "$SOURCE_ID" ]; then
   exit 0
 fi
 
+# qlen = whitespace-stripped length of the typed AND-filter query, used as a
+# recency-weighting hint by the daemon. The FTS MATCH refinement still happens
+# downstream in render_ids.sh; this only steers the KNN ordering.
+stripped_q="$(printf '%s' "$REFINE_Q" | tr -d '[:space:]')"
+QLEN="${#stripped_q}"
+
 # Prefer daemon (fast); fall back to direct mode.
-ids="$("${SCRIPT_DIR}/embed.sh" call-knn-id "$SOURCE_ID" --limit 200 2>/dev/null || true)"
+ids="$("${SCRIPT_DIR}/embed.sh" call-knn-id "$SOURCE_ID" --limit 200 --qlen "$QLEN" 2>/dev/null || true)"
 if [ -z "$ids" ]; then
-  ids="$("${SCRIPT_DIR}/embed.sh" search-id "$SOURCE_ID" --limit 200 2>/dev/null || true)"
+  ids="$("${SCRIPT_DIR}/embed.sh" search-id "$SOURCE_ID" --limit 200 --qlen "$QLEN" 2>/dev/null || true)"
 fi
 if [ -z "$ids" ]; then
   exit 0

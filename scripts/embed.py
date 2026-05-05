@@ -289,7 +289,7 @@ def backfill_sync() -> int:
     return len(pending)
 
 
-def search_id_direct(source_id: int, limit: int) -> list[int]:
+def search_id_direct(source_id: int, limit: int, qlen: int = 0) -> list[int]:
     db = open_db()
     try:
         row = db.execute(
@@ -310,33 +310,52 @@ def search_id_direct(source_id: int, limit: int) -> list[int]:
                     "INSERT INTO prompts_vec(rowid, embedding) VALUES (?, ?)",
                     (source_id, blob),
                 )
-        return _knn_blob(db, blob, limit, scope_default(), exclude_id=source_id)
+        return _knn_blob(db, blob, limit, scope_default(), exclude_id=source_id, qlen=qlen)
     finally:
         db.close()
 
 
-def _knn_blob(db, blob: bytes, limit: int, scope: str, exclude_id: int | None = None) -> list[int]:
+def _recency_weight(qlen: int) -> float:
+    if qlen <= 3:
+        return 2.5
+    elif qlen <= 10:
+        return 1.5
+    elif qlen <= 25:
+        return 1.0
+    else:
+        return 0.5
+
+
+def _knn_blob(db, blob: bytes, limit: int, scope: str, exclude_id: int | None = None, qlen: int = 0) -> list[int]:
     proj_filter = "" if scope == "everywhere" else scope
     k_window = max(limit * 4, 200)
     excl_active = 1 if exclude_id is not None else 0
     excl_id = exclude_id if exclude_id is not None else 0
+    w_sim = 1.0
+    w_rec = _recency_weight(qlen)
     rows = db.execute(
         """
         WITH knn AS (
-          SELECT rowid AS id, distance
-          FROM prompts_vec
-          WHERE embedding MATCH ?
-          ORDER BY distance
-          LIMIT ?
+            SELECT rowid AS id, distance
+            FROM prompts_vec
+            WHERE embedding MATCH ?
+            AND k = ?
+        ),
+        ranked AS (
+            SELECT k.id,
+                   ROW_NUMBER() OVER (ORDER BY k.distance)            AS sim_rank,
+                   ROW_NUMBER() OVER (ORDER BY p.ts DESC)             AS rec_rank,
+                   p.ts, p.pinned
+            FROM knn k JOIN prompts p ON p.id = k.id
+            WHERE (? = 0 OR k.id != ?)
+              AND (? = '' OR p.project = ?)
         )
-        SELECT k.id
-        FROM knn k JOIN prompts p ON p.id = k.id
-        WHERE (? = 0 OR k.id != ?)
-          AND (? = '' OR p.project = ?)
-        ORDER BY k.distance, p.ts DESC
+        SELECT id
+        FROM ranked
+        ORDER BY (? * 1.0 / (60 + sim_rank)) + (? * 1.0 / (60 + rec_rank)) DESC
         LIMIT ?
         """,
-        (blob, k_window, excl_active, excl_id, proj_filter, proj_filter, limit),
+        (blob, k_window, excl_active, excl_id, proj_filter, proj_filter, w_sim, w_rec, limit),
     ).fetchall()
     return [r[0] for r in rows]
 
@@ -411,9 +430,9 @@ class Daemon:
             self.shutdown = True
             return {"ok": True}
         if cmd == "knn-id":
-            return {"ok": True, "ids": self._knn_id(int(req["id"]), int(req.get("limit", 200)), req.get("scope", "everywhere"))}
+            return {"ok": True, "ids": self._knn_id(int(req["id"]), int(req.get("limit", 200)), req.get("scope", "everywhere"), int(req.get("qlen", 0)))}
         if cmd == "knn-text":
-            return {"ok": True, "ids": self._knn_text(req["text"], int(req.get("limit", 200)), req.get("scope", "everywhere"))}
+            return {"ok": True, "ids": self._knn_text(req["text"], int(req.get("limit", 200)), req.get("scope", "everywhere"), int(req.get("qlen", 0)))}
         if cmd == "hybrid":
             return {"ok": True, "ids": self._hybrid(req["text"], int(req.get("limit", 200)), req.get("scope", "everywhere"))}
         if cmd == "hybrid-rendered":
@@ -434,7 +453,7 @@ class Daemon:
 
     # ---- search ops ----
 
-    def _knn_id(self, source_id: int, limit: int, scope: str) -> list[int]:
+    def _knn_id(self, source_id: int, limit: int, scope: str, qlen: int = 0) -> list[int]:
         db = open_db()
         try:
             row = db.execute(
@@ -453,18 +472,18 @@ class Daemon:
                         "INSERT INTO prompts_vec(rowid, embedding) VALUES (?, ?)",
                         (source_id, blob),
                     )
-            return _knn_blob(db, blob, limit, scope, exclude_id=source_id)
+            return _knn_blob(db, blob, limit, scope, exclude_id=source_id, qlen=qlen)
         finally:
             db.close()
 
-    def _knn_text(self, text: str, limit: int, scope: str) -> list[int]:
+    def _knn_text(self, text: str, limit: int, scope: str, qlen: int = 0) -> list[int]:
         if not text.strip():
             return []
         db = open_db()
         try:
             vec = next(iter(self.model.embed([text])))
             blob = to_blob(vec)
-            return _knn_blob(db, blob, limit, scope)
+            return _knn_blob(db, blob, limit, scope, qlen=qlen)
         finally:
             db.close()
 
@@ -514,22 +533,31 @@ class Daemon:
                 ).fetchall()
             else:
                 # Vec-only path: still pinned-on-top.
+                w_sim = 1.0
+                w_rec = 2.0
                 rows = db.execute(
                     """
                     WITH knn AS (
-                      SELECT rowid AS id, distance
-                      FROM prompts_vec
-                      WHERE embedding MATCH ?
-                      ORDER BY distance
-                      LIMIT ?
+                        SELECT rowid AS id, distance
+                        FROM prompts_vec
+                        WHERE embedding MATCH ?
+                        AND k = ?
+                    ),
+                    ranked AS (
+                        SELECT k.id,
+                               ROW_NUMBER() OVER (ORDER BY k.distance)            AS sim_rank,
+                               ROW_NUMBER() OVER (ORDER BY p.ts DESC)             AS rec_rank,
+                               p.ts, p.pinned
+                        FROM knn k JOIN prompts p ON p.id = k.id
+                        WHERE (? = '' OR p.project = ?)
                     )
-                    SELECT k.id
-                    FROM knn k JOIN prompts p ON p.id = k.id
-                    WHERE (? = '' OR p.project = ?)
-                    ORDER BY p.pinned DESC, k.distance, p.ts DESC
+                    SELECT id
+                    FROM ranked
+                    ORDER BY pinned DESC,
+                             (? * 1.0 / (60 + sim_rank)) + (? * 1.0 / (60 + rec_rank)) DESC
                     LIMIT ?
                     """,
-                    (blob, k_window, proj_filter, proj_filter, limit),
+                    (blob, k_window, proj_filter, proj_filter, w_sim, w_rec, limit),
                 ).fetchall()
             return [r[0] for r in rows]
         finally:
@@ -650,6 +678,7 @@ def main() -> int:
     s = sub.add_parser("search-id")
     s.add_argument("id", type=int)
     s.add_argument("--limit", type=int, default=200)
+    s.add_argument("--qlen", type=int, default=0)
 
     sub.add_parser("daemon")
     sub.add_parser("daemon-ensure")
@@ -658,10 +687,12 @@ def main() -> int:
     s = sub.add_parser("call-knn-id")
     s.add_argument("id", type=int)
     s.add_argument("--limit", type=int, default=200)
+    s.add_argument("--qlen", type=int, default=0)
 
     s = sub.add_parser("call-knn-text")
     s.add_argument("text")
     s.add_argument("--limit", type=int, default=200)
+    s.add_argument("--qlen", type=int, default=0)
 
     s = sub.add_parser("call-hybrid")
     s.add_argument("text")
@@ -683,7 +714,7 @@ def main() -> int:
         backfill_sync()
         return 0
     if args.cmd == "search-id":
-        for pid in search_id_direct(args.id, args.limit):
+        for pid in search_id_direct(args.id, args.limit, qlen=getattr(args, "qlen", 0)):
             print(pid)
         return 0
     if args.cmd == "daemon":
@@ -710,6 +741,8 @@ def main() -> int:
             req["text"] = args.text
         if hasattr(args, "limit"):
             req["limit"] = args.limit
+        if hasattr(args, "qlen"):
+            req["qlen"] = args.qlen
         if getattr(args, "no_nerd", False):
             req["no_nerd"] = True
         try:
