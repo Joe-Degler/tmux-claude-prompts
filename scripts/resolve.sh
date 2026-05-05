@@ -10,6 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/helpers.sh"
 
 require_dep sqlite3
+: "${AWK:=awk}"
 
 id="${1:-}"
 if [ -z "$id" ] || ! printf '%s' "$id" | grep -qE '^[0-9]+$'; then
@@ -29,17 +30,13 @@ trap 'rm -f "$display_tmp" "$paste_tmp"' EXIT
 
 printf '%s' "$display_full" > "$display_tmp"
 
-# Paste rows: one per sqlite3 call to avoid embedded-newline parsing issues.
-# Format in paste_tmp: \x01\x02\x03<pid>\x03<content>
-paste_ids="$(sqlite3 -cmd ".timeout 3000" "$CP_DB" \
-  "SELECT paste_id FROM paste_contents WHERE prompt_id=${id} ORDER BY paste_id;" \
-  2>/dev/null || true)"
-for pid in $paste_ids; do
-  printf '\x01\x02\x03%s\x03' "$pid"
-  sqlite3 -cmd ".timeout 3000" "$CP_DB" \
-    "SELECT content FROM paste_contents WHERE prompt_id=${id} AND paste_id=${pid};" \
-    2>/dev/null
-done > "$paste_tmp"
+# Format in paste_tmp: \x01\x02\x03<pid>\x03<content> per paste row.
+# Build the sentinel format directly in SQL via GROUP_CONCAT so no row
+# delimiter byte is required — paste content may contain ANY byte
+# (including \x1e, \x1f, \n), so any external delimiter is unsafe.
+sqlite3 -bail -cmd ".timeout 3000" "$CP_DB" \
+  "SELECT GROUP_CONCAT(char(1)||char(2)||char(3)||paste_id||char(3)||content, '') FROM paste_contents WHERE prompt_id=${id} ORDER BY paste_id;" \
+  2>/dev/null > "$paste_tmp"
 
 awk -v paste_file="$paste_tmp" -v display_file="$display_tmp" '
 function load_pastes(    raw, recs, n, i, rec, e1, pid, pcontent) {

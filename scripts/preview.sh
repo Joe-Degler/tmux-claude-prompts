@@ -28,12 +28,14 @@ cols="${FZF_PREVIEW_COLUMNS:-80}"
 FENCE_FOOTER=""
 for (( i=0; i<cols; i++ )); do FENCE_FOOTER="${FENCE_FOOTER}${FENCE_CHAR}"; done
 
-project="$(sqlite3 -cmd ".timeout 3000" "$CP_DB" "SELECT project FROM prompts WHERE id=${id};" 2>/dev/null)"
-ts="$(sqlite3 -cmd ".timeout 3000" "$CP_DB" "SELECT ts FROM prompts WHERE id=${id};" 2>/dev/null)"
-[ -z "$ts" ] && { printf '(prompt not found)\n'; exit 0; }
-
-paste_count="$(sqlite3 -cmd ".timeout 3000" "$CP_DB" "SELECT count(*) FROM paste_contents WHERE prompt_id=${id};" 2>/dev/null || printf '0')"
-line_count="$(sqlite3 -cmd ".timeout 3000" "$CP_DB" "SELECT length(display_full) - length(replace(display_full, char(10), '')) + 1 FROM prompts WHERE id=${id};" 2>/dev/null || printf '0')"
+RS=$'\x1f'
+meta="$(sqlite3 -bail -separator "$RS" -cmd ".timeout 3000" "$CP_DB" \
+  "SELECT project, ts, length(display_full) - length(replace(display_full, char(10), '')) + 1, COALESCE(label,''), (SELECT count(*) FROM paste_contents WHERE prompt_id=${id}) FROM prompts WHERE id=${id};" \
+  2>/dev/null || true)"
+if [ -z "$meta" ]; then
+  printf '(prompt not found)\n'; exit 0
+fi
+IFS="$RS" read -r project ts line_count label paste_count <<< "$meta"
 
 # Body: resolve.sh inlines pastes (or "[Pasted Text Lost]" for missing),
 # then awk wraps each line at $cols chars.
@@ -59,8 +61,6 @@ else rel_time="$(( age_ms/31536000000 ))y ago"; fi
 
 project_base=""; [ -n "$project" ] && project_base="$(basename "$project")"
 
-# Optional label appended to the metadata footer.
-label="$(sqlite3 -cmd ".timeout 3000" "$CP_DB" "SELECT COALESCE(label, '') FROM prompts WHERE id=${id};" 2>/dev/null || true)"
 label_suffix=""
 if [ -n "$label" ]; then
   label_suffix=" · Label: ${label}"

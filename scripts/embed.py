@@ -35,11 +35,9 @@ import threading
 import time
 from typing import Iterable
 
-import sqlite_vec  # noqa: F401  (loadable_path used implicitly via sqlite_vec.load)
-
-# Lazy import: fastembed pulls in onnxruntime + numpy. We only want that
-# cost in the processes that actually embed (daemon, direct backfill,
-# direct search-id). Clients (call-*) don't need it.
+# sqlite_vec, fastembed, and sqlite3 are import-heavy. Defer them until a
+# code path that actually needs them runs — the call-* RPC clients hit none
+# of these and want sub-50ms cold-start.
 def _lazy_text_embedding():
     from fastembed import TextEmbedding
     return TextEmbedding
@@ -51,6 +49,93 @@ BATCH_SIZE = 64
 RRF_K = 60
 IDLE_TIMEOUT = 600
 ACCEPT_TIMEOUT = 30
+
+
+# ---------------- Row rendering (mirrors cp_render_rows in render.sh) ----------------
+# These glyphs and 256-color codes MUST stay in sync with scripts/glyphs.sh.
+
+_GLYPHS_NERD = {
+    "pin_on": "★",   # ★
+    "pin_off": " ",
+    "hot": "•",      # •
+    "warm": "·",     # ·
+    "cold": " ",
+    "trunc": "…",    # …
+}
+_GLYPHS_ASCII = {
+    "pin_on": "*",
+    "pin_off": " ",
+    "hot": ".",
+    "warm": ",",
+    "cold": " ",
+    "trunc": "...",
+}
+_PIN_ON_COLOR = 214   # amber
+_HOT_COLOR = 244
+_WARM_COLOR = 244
+_PROJ_COLOR = 243
+_LABEL_COLOR = 179
+_RESET = "\x1b[0m"
+
+_ONE_DAY_MS = 86400000
+_SEVEN_DAYS_MS = 604800000
+
+
+def _render_rows_py(rows, scope, now_ms, use_ascii=False):
+    g = _GLYPHS_ASCII if use_ascii else _GLYPHS_NERD
+    ansi_pin_on = "\x1b[38;5;{}m{}{}".format(_PIN_ON_COLOR, g["pin_on"], _RESET)
+    ansi_hot = "\x1b[38;5;{}m{}{}".format(_HOT_COLOR, g["hot"], _RESET)
+    ansi_warm = "\x1b[38;5;{}m{}{}".format(_WARM_COLOR, g["warm"], _RESET)
+    ansi_proj_open = "\x1b[38;5;{}m".format(_PROJ_COLOR)
+    pin_off = g["pin_off"]
+    cold = g["cold"]
+    trunc = g["trunc"]
+    empty_chip = " " * 16
+
+    show_chip = scope == "everywhere" or not scope
+
+    out = []
+    for row in rows:
+        rid, display, project, ts, pinned, label = row
+        if rid is None or rid == "":
+            continue
+
+        pin_str = ansi_pin_on if pinned == 1 else pin_off
+
+        age_ms = now_ms - int(ts)
+        if age_ms < _ONE_DAY_MS:
+            rec_str = ansi_hot
+        elif age_ms < _SEVEN_DAYS_MS:
+            rec_str = ansi_warm
+        else:
+            rec_str = cold
+
+        if show_chip:
+            if project:
+                chip_name = project.rsplit("/", 1)[-1]
+                if len(chip_name) > 14:
+                    chip_name = chip_name[:14]
+                else:
+                    chip_name = (chip_name + " " * 14)[:14]
+                chip_str = "{}{}{}  ".format(ansi_proj_open, chip_name, _RESET)
+            else:
+                chip_str = empty_chip
+        else:
+            chip_str = ""
+
+        label_str = ""
+        if label:
+            lbl = label.replace("\x1b", "")
+            if len(lbl) > 60:
+                lbl = lbl[:60]
+            label_str = "\x1b[38;5;{}m[{}]{} ".format(_LABEL_COLOR, lbl, _RESET)
+
+        disp = display or ""
+        if len(disp) > 500:
+            disp = disp[:500] + trunc
+
+        out.append("{}\x1f{} {} {}{}{}\n".format(rid, pin_str, rec_str, chip_str, label_str, disp))
+    return out
 
 
 # ---------------- Path / env helpers ----------------
@@ -103,6 +188,7 @@ def case_default() -> str:
 
 def open_db():
     import sqlite3
+    import sqlite_vec
     db = sqlite3.connect(db_path(), timeout=3.0)
     db.enable_load_extension(True)
     sqlite_vec.load(db)
@@ -330,6 +416,13 @@ class Daemon:
             return {"ok": True, "ids": self._knn_text(req["text"], int(req.get("limit", 200)), req.get("scope", "everywhere"))}
         if cmd == "hybrid":
             return {"ok": True, "ids": self._hybrid(req["text"], int(req.get("limit", 200)), req.get("scope", "everywhere"))}
+        if cmd == "hybrid-rendered":
+            return {"ok": True, "rows": self._hybrid_rendered(
+                req["text"],
+                int(req.get("limit", 200)),
+                req.get("scope", "everywhere"),
+                bool(req.get("no_nerd", False)),
+            )}
         if cmd == "backfill-async":
             self._kick_backfill()
             return {"ok": True}
@@ -441,6 +534,26 @@ class Daemon:
             return [r[0] for r in rows]
         finally:
             db.close()
+
+    def _hybrid_rendered(self, text: str, limit: int, scope: str, use_ascii: bool) -> list[str]:
+        ids = self._hybrid(text, limit, scope)
+        if not ids:
+            return []
+        db = open_db()
+        try:
+            values_sql = ",".join("({}, {})".format(int(pid), rk) for rk, pid in enumerate(ids))
+            rows = db.execute(
+                "WITH ranked(id, rk) AS (VALUES " + values_sql + ") "
+                "SELECT p.id, "
+                "  COALESCE(NULLIF(p.display_preview, ''), p.display) AS display, "
+                "  p.project, p.ts, p.pinned, COALESCE(p.label, '') "
+                "FROM ranked r JOIN prompts p ON p.id = r.id "
+                "ORDER BY r.rk"
+            ).fetchall()
+        finally:
+            db.close()
+        now_ms = int(time.time() * 1000)
+        return _render_rows_py(rows, scope, now_ms, use_ascii=use_ascii)
 
     # ---- backfill thread ----
 
@@ -554,6 +667,12 @@ def main() -> int:
     s.add_argument("text")
     s.add_argument("--limit", type=int, default=200)
 
+    s = sub.add_parser("call-hybrid-rendered")
+    s.add_argument("text")
+    s.add_argument("--limit", type=int, default=200)
+    s.add_argument("--scope", default=None)
+    s.add_argument("--no-nerd", action="store_true", default=False)
+
     sub.add_parser("call-backfill-async")
     sub.add_parser("call-ping")
     sub.add_parser("call-backfill-status")
@@ -583,13 +702,16 @@ def main() -> int:
         sys.exit(0 if daemon_ping() else 1)
     if args.cmd.startswith("call-"):
         verb = args.cmd[5:]
-        req: dict = {"cmd": verb, "scope": scope_default()}
+        scope_override = getattr(args, "scope", None)
+        req: dict = {"cmd": verb, "scope": scope_override if scope_override else scope_default()}
         if hasattr(args, "id"):
             req["id"] = args.id
         if hasattr(args, "text"):
             req["text"] = args.text
         if hasattr(args, "limit"):
             req["limit"] = args.limit
+        if getattr(args, "no_nerd", False):
+            req["no_nerd"] = True
         try:
             resp = daemon_call(req, timeout=10.0)
         except (socket.error, FileNotFoundError, ConnectionRefusedError) as e:
@@ -601,6 +723,11 @@ def main() -> int:
         if verb == "backfill-status":
             json.dump({k: resp.get(k) for k in ("running", "done", "total")}, sys.stdout)
             sys.stdout.write("\n")
+        elif verb == "hybrid-rendered":
+            buf = sys.stdout.buffer
+            for row in resp.get("rows", []):
+                buf.write(row.encode("utf-8"))
+            buf.flush()
         else:
             for pid in resp.get("ids", []):
                 print(pid)

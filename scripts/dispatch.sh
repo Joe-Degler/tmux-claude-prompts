@@ -12,7 +12,7 @@
 #   3. Case-sensitive mode
 #        → query.sh "<query>"                (byte-wise lexical, no embeddings)
 #   4. Default: try daemon-backed hybrid (FTS5 + vec via RRF, pinned-on-top)
-#        → embed.sh call-hybrid | render_ids.sh
+#        → python embed.py call-hybrid-rendered (daemon returns formatted rows)
 #      Daemon unreachable → query.sh "<query>" (lexical fallback)
 
 set -euo pipefail
@@ -56,9 +56,32 @@ if [ "$case_mode" = "sensitive" ]; then
 fi
 
 # (4) Hybrid via daemon, with lexical fallback.
-ids="$("${SCRIPT_DIR}/embed.sh" call-hybrid "$Q" --limit 200 2>/dev/null || true)"
-if [ -z "$ids" ]; then
+# Skip embed.sh's venv-bootstrap shell (~30 ms): on hot path the venv
+# already exists. Fall back to query.sh on any failure.
+VENV_PY="${CP_VENV_DIR:-${CP_DATA_DIR}/.venv}/bin/python"
+if [ ! -x "$VENV_PY" ]; then
   exec "${SCRIPT_DIR}/query.sh" "$Q"
 fi
 
-printf '%s\n' "$ids" | "${SCRIPT_DIR}/render_ids.sh"
+# Pass the glyph mode through so the daemon renders ASCII when configured.
+. "${SCRIPT_DIR}/glyphs.sh"
+no_nerd_flag=()
+if [ "${GLYPHS[trunc]}" = "..." ]; then
+  no_nerd_flag=(--no-nerd)
+fi
+
+scope="everywhere"
+if [ -f "$CP_SCOPE_FILE" ]; then
+  scope="$(cat "$CP_SCOPE_FILE")"
+fi
+[ -z "$scope" ] && scope="everywhere"
+
+tmp_out="$(mktemp /tmp/cp_dispatch_XXXXXX)"
+trap 'rm -f "$tmp_out"' EXIT
+if ! "$VENV_PY" "${SCRIPT_DIR}/embed.py" call-hybrid-rendered "$Q" --limit 200 --scope "$scope" "${no_nerd_flag[@]}" > "$tmp_out" 2>/dev/null; then
+  exec "${SCRIPT_DIR}/query.sh" "$Q"
+fi
+if [ ! -s "$tmp_out" ]; then
+  exec "${SCRIPT_DIR}/query.sh" "$Q"
+fi
+cat "$tmp_out"
