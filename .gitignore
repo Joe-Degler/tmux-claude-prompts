@@ -1,6 +1,9 @@
 # Local debugging scratch
 tmp/
 
+# Python bytecode
+__pycache__/
+
 # OS / editor noise
 .DS_Store
 *.swp

@@ -19,14 +19,16 @@ db_id_for() {
 }
 
 # Case 1: empty query returns recent first
-# The /init row deduped to ts=1714780500000 should be first non-pinned row
+# The newest fixture line (ts=1761930800000, the hash-missing row) should
+# be first non-pinned row.
 @test "empty query returns recent first" {
-  local init_id
-  init_id="$(db_id_for '/init what should the schema look like')"
+  local newest_id
+  newest_id="$(sqlite3 -cmd '.timeout 3000' "$CP_DB" \
+    'SELECT id FROM prompts WHERE ts = 1761930800000;')"
 
-  # First id emitted by query_ids should be the /init row
+  # First id emitted by query_ids should be the newest row
   first_id="$(query_ids '' | head -1)"
-  [ "$first_id" = "$init_id" ]
+  [ "$first_id" = "$newest_id" ]
 }
 
 # Case 2: case-insensitive FTS match — both cloudflare rows

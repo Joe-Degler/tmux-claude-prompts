@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS prompts (
   ts        INTEGER NOT NULL,                      -- ms epoch, max(timestamp) per (display,project)
   pinned    INTEGER NOT NULL DEFAULT 0,
   pinned_at INTEGER,                               -- ms epoch when pinned, NULL otherwise
-  hash      TEXT    NOT NULL UNIQUE                -- sha1(display_full || '\x1f' || project)
+  hash      TEXT    NOT NULL UNIQUE,               -- sha1(display_full || '\x1f' || project)
+  label     TEXT    NULL                           -- optional short user-supplied label (≤60 chars)
 );
 
 CREATE INDEX IF NOT EXISTS idx_prompts_ts      ON prompts(ts DESC);
@@ -34,7 +35,23 @@ CREATE TABLE IF NOT EXISTS ingest_state (
   value TEXT NOT NULL
 );
 
--- FTS5 indexes display + concatenated paste contents.
+-- Groups: user-defined named bundles of prompts.
+CREATE TABLE IF NOT EXISTS groups (
+  id   INTEGER PRIMARY KEY,
+  name TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+  ts   INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS group_members (
+  group_id  INTEGER NOT NULL REFERENCES groups(id)  ON DELETE CASCADE,
+  prompt_id INTEGER NOT NULL REFERENCES prompts(id) ON DELETE CASCADE,
+  ts        INTEGER NOT NULL,
+  PRIMARY KEY (group_id, prompt_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_group_members_prompt ON group_members(prompt_id);
+
+-- FTS5 indexes display + concatenated paste contents (body) plus optional label.
 -- Normal (non-contentless) FTS5 mode: FTS5 stores its own copy of body.
 -- Blueprint specified content='' (contentless) but contentless tables do not
 -- support DELETE via rowid — they require the special
@@ -45,17 +62,19 @@ CREATE TABLE IF NOT EXISTS ingest_state (
 -- content (≤3 MB in the sample dataset) — acceptable per §12 note.
 CREATE VIRTUAL TABLE IF NOT EXISTS prompts_fts USING fts5(
   body,
+  label,
   tokenize='unicode61 remove_diacritics 2'
 );
 
--- INSERT on prompts → insert composed body into FTS
+-- INSERT on prompts → insert composed body+label into FTS
 CREATE TRIGGER IF NOT EXISTS prompts_ai AFTER INSERT ON prompts BEGIN
-  INSERT INTO prompts_fts(rowid, body) VALUES (
+  INSERT INTO prompts_fts(rowid, body, label) VALUES (
     new.id,
     new.display || char(10) || COALESCE(
       (SELECT group_concat(content, char(10)) FROM paste_contents WHERE prompt_id = new.id),
       ''
-    )
+    ),
+    COALESCE(new.label, '')
   );
 END;
 
@@ -64,50 +83,69 @@ CREATE TRIGGER IF NOT EXISTS prompts_ad AFTER DELETE ON prompts BEGIN
   DELETE FROM prompts_fts WHERE rowid = old.id;
 END;
 
--- UPDATE on prompts → re-index
+-- UPDATE on prompts.display → re-index
 CREATE TRIGGER IF NOT EXISTS prompts_au AFTER UPDATE OF display ON prompts BEGIN
   DELETE FROM prompts_fts WHERE rowid = old.id;
-  INSERT INTO prompts_fts(rowid, body) VALUES (
+  INSERT INTO prompts_fts(rowid, body, label) VALUES (
     new.id,
     new.display || char(10) || COALESCE(
       (SELECT group_concat(content, char(10)) FROM paste_contents WHERE prompt_id = new.id),
       ''
-    )
+    ),
+    COALESCE(new.label, '')
+  );
+END;
+
+-- UPDATE on prompts.label → re-index
+CREATE TRIGGER IF NOT EXISTS prompts_au_label AFTER UPDATE OF label ON prompts BEGIN
+  DELETE FROM prompts_fts WHERE rowid = old.id;
+  INSERT INTO prompts_fts(rowid, body, label) VALUES (
+    new.id,
+    new.display || char(10) || COALESCE(
+      (SELECT group_concat(content, char(10)) FROM paste_contents WHERE prompt_id = new.id),
+      ''
+    ),
+    COALESCE(new.label, '')
   );
 END;
 
 -- INSERT on paste_contents → re-index parent prompt
 CREATE TRIGGER IF NOT EXISTS paste_ai AFTER INSERT ON paste_contents BEGIN
   DELETE FROM prompts_fts WHERE rowid = new.prompt_id;
-  INSERT INTO prompts_fts(rowid, body)
+  INSERT INTO prompts_fts(rowid, body, label)
   SELECT p.id,
          p.display || char(10) || COALESCE(
            (SELECT group_concat(content, char(10)) FROM paste_contents WHERE prompt_id = p.id),
            ''
-         )
+         ),
+         COALESCE(p.label, '')
   FROM prompts p WHERE p.id = new.prompt_id;
 END;
 
 -- UPDATE on paste_contents → re-index
 CREATE TRIGGER IF NOT EXISTS paste_au AFTER UPDATE ON paste_contents BEGIN
   DELETE FROM prompts_fts WHERE rowid = new.prompt_id;
-  INSERT INTO prompts_fts(rowid, body)
+  INSERT INTO prompts_fts(rowid, body, label)
   SELECT p.id,
          p.display || char(10) || COALESCE(
            (SELECT group_concat(content, char(10)) FROM paste_contents WHERE prompt_id = p.id),
            ''
-         )
+         ),
+         COALESCE(p.label, '')
   FROM prompts p WHERE p.id = new.prompt_id;
 END;
 
 -- DELETE on paste_contents → re-index parent (if it still exists)
 CREATE TRIGGER IF NOT EXISTS paste_ad AFTER DELETE ON paste_contents BEGIN
   DELETE FROM prompts_fts WHERE rowid = old.prompt_id;
-  INSERT INTO prompts_fts(rowid, body)
+  INSERT INTO prompts_fts(rowid, body, label)
   SELECT p.id,
          p.display || char(10) || COALESCE(
            (SELECT group_concat(content, char(10)) FROM paste_contents WHERE prompt_id = p.id),
            ''
-         )
+         ),
+         COALESCE(p.label, '')
   FROM prompts p WHERE p.id = old.prompt_id;
 END;
+
+PRAGMA user_version = 6;

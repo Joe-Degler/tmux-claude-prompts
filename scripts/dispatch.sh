@@ -3,6 +3,8 @@
 # Usage: dispatch.sh "<query>"
 #
 # Decision tree (in order):
+#   0. Group mode active ($CP_RUN_DIR/group holds a group id)
+#        → group.sh <gid> <query>            (members of group, query refines)
 #   1. Similar mode active ($CP_RUN_DIR/similar holds an id)
 #        → similar.sh <id> <query>          (semantic neighbors, query refines)
 #   2. Empty query
@@ -20,6 +22,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/paths.sh"
 
 Q="${1:-}"
+
+# (0) Group mode — member filter trumps everything else, query refines.
+group_file="${CP_RUN_DIR}/group"
+if [ -f "$group_file" ]; then
+  group_id="$(< "$group_file")"
+  if [ -n "$group_id" ]; then
+    exec "${SCRIPT_DIR}/group.sh" "$group_id" "$Q"
+  fi
+fi
 
 # (1) Similar mode
 similar_file="${CP_RUN_DIR}/similar"

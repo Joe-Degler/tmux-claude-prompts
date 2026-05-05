@@ -19,6 +19,20 @@ load_fixtures() {
   export CP_SKIP_EMBED=1
   mkdir -p "$HOME/.claude" "$XDG_DATA_HOME" "$XDG_RUNTIME_DIR"
   cp "${BATS_TEST_DIRNAME}/fixtures/history.jsonl" "$HOME/.claude/history.jsonl"
+  # Mirror the per-session JSONL files Claude Code keeps under
+  # ~/.claude/projects/<sanitized-project>/<session_id>.jsonl so the
+  # session-fallback paste-recovery path has data to read.
+  if [ -d "${BATS_TEST_DIRNAME}/fixtures/claude-projects" ]; then
+    mkdir -p "$HOME/.claude/projects"
+    cp -r "${BATS_TEST_DIRNAME}/fixtures/claude-projects/." "$HOME/.claude/projects/"
+  fi
+  # Mirror the paste-cache directory: ~/.claude/paste-cache/<hash>.txt is
+  # where Claude Code stores deduplicated paste bodies referenced from
+  # history.jsonl by `contentHash`.
+  if [ -d "${BATS_TEST_DIRNAME}/fixtures/claude-paste-cache" ]; then
+    mkdir -p "$HOME/.claude/paste-cache"
+    cp -r "${BATS_TEST_DIRNAME}/fixtures/claude-paste-cache/." "$HOME/.claude/paste-cache/"
+  fi
   # Re-source paths.sh in the new HOME context so CP_* vars are fresh.
   # Unset the guard so paths.sh re-evaluates.
   unset CP_PATHS_LOADED CP_HELPERS_LOADED

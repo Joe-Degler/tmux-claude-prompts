@@ -20,6 +20,8 @@ Usage:
   claude-prompts case  <toggle|get|set <mode>>  Manage case sensitivity (insensitive | sensitive)
   claude-prompts query <q>                   Emit raw fzf rows for query (debug)
   claude-prompts insert <paste|paste-literal|copy> <id>  Apply insert action
+  claude-prompts group  <list|create <name>|delete <id>|rename <id> <name>>  Manage groups
+  claude-prompts label  <id> [<text>]        Set/clear a prompt's short label (≤60 chars)
   claude-prompts version                     Print version
   claude-prompts help                        Show this message
 
@@ -27,19 +29,22 @@ Popup keymap:
   Enter      Insert resolved prompt into originating pane
   Ctrl-L     Insert literal (markers unresolved)
   Ctrl-O     Copy resolved prompt to clipboard
-  Ctrl-P     Toggle pin on selected row
+  Ctrl-P     Toggle pin on focused row
+  Ctrl-G     Open group picker (select or create)
+  Ctrl-A     Row actions (group-add · label · delete)
   Ctrl-S     Toggle scope (Everywhere <-> Project)
   Shift-←/→  Cycle through all scopes (Everywhere + every project, by recency)
   Ctrl-T     Toggle case sensitivity (Aa chip dim = insensitive, cyan = sensitive)
   Ctrl-/     Toggle similar mode (semantic neighbors of focused row;
              query string further refines via lexical AND-filter)
-  Ctrl-D     Delete row from local store
   Ctrl-R     Force re-ingest from history.jsonl
-  ?          Toggle preview pane
+  ?          Show full keymap (cheatsheet overlay in preview pane)
   Shift-↑/↓  Scroll preview by one line
   Alt-↑/↓    Scroll preview by half a page
-  Ctrl-]     Cycle preview size (30% → 80% → hidden → 30%)
-  Esc / ^Q   Close popup (use ^Q if tmux escape-time delays Esc)
+  Ctrl-]     Cycle preview size (30% → 80% → hidden → 30%) — also hides preview
+  Ctrl-Q     Close popup (preferred over Esc, which has terminal-level lag)
+  Alt-Q      Close popup (alias for Ctrl-Q)
+  Esc        Also closes (kept for power users; brief lag while terminal disambiguates)
 EOF
 }
 
@@ -97,6 +102,16 @@ case "$subcmd" in
       exit 1
     fi
     exec "${SCRIPT_DIR}/insert.sh" "$action" "$id"
+    ;;
+
+  group)
+    shift
+    exec "${SCRIPT_DIR}/group_manage.sh" "$@"
+    ;;
+
+  label)
+    shift
+    exec "${SCRIPT_DIR}/label_set.sh" "$@"
     ;;
 
   version)

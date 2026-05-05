@@ -74,7 +74,7 @@ if [ -n "$Q" ]; then
 fi
 
 # --- SQL query runner ---
-# Returns rows as: id<RS>display<RS>project<RS>ts<RS>pinned, RS = 0x1e.
+# Returns rows as: id<RS>display<RS>project<RS>ts<RS>pinned<RS>label, RS = 0x1e.
 # Pipe ('|') is unsafe because display can contain literal pipes (markdown tables).
 RS=$'\x1e'
 run_sql() {
@@ -95,7 +95,7 @@ trap 'rm -f "$sql_tmp"' EXIT
 if [ -z "$Q" ]; then
   # BROWSE query
   cat > "$sql_tmp" <<SQL
-SELECT id, COALESCE(NULLIF(display_preview, ''), display) AS display, project, ts, pinned
+SELECT id, COALESCE(NULLIF(display_preview, ''), display) AS display, project, ts, pinned, label
 FROM prompts
 WHERE (${sq_proj} = '' OR project = ${sq_proj})
 ORDER BY pinned DESC, ts DESC
@@ -115,7 +115,7 @@ elif [ "$use_sensitive" -eq 1 ]; then
   if [ "${#where_parts[@]}" -eq 0 ]; then
     # Whitespace-only query — fall through to BROWSE behaviour.
     cat > "$sql_tmp" <<SQL
-SELECT id, COALESCE(NULLIF(display_preview, ''), display) AS display, project, ts, pinned
+SELECT id, COALESCE(NULLIF(display_preview, ''), display) AS display, project, ts, pinned, label
 FROM prompts
 WHERE (${sq_proj} = '' OR project = ${sq_proj})
 ORDER BY pinned DESC, ts DESC
@@ -128,7 +128,7 @@ SQL
       where_clause="${where_clause} AND ${where_parts[$i]}"
     done
     cat > "$sql_tmp" <<SQL
-SELECT id, COALESCE(NULLIF(display_preview, ''), display) AS display, project, ts, pinned
+SELECT id, COALESCE(NULLIF(display_preview, ''), display) AS display, project, ts, pinned, label
 FROM prompts
 WHERE ${where_clause}
   AND (${sq_proj} = '' OR project = ${sq_proj})
@@ -142,7 +142,7 @@ elif [ "$use_fts" -eq 1 ]; then
   # FTS query — sort recent-first to match BROWSE/LIKE/sensitive paths.
   sq_q="$(sql_quote "$fts_query")"
   cat > "$sql_tmp" <<SQL
-SELECT p.id, COALESCE(NULLIF(p.display_preview, ''), p.display) AS display, p.project, p.ts, p.pinned
+SELECT p.id, COALESCE(NULLIF(p.display_preview, ''), p.display) AS display, p.project, p.ts, p.pinned, p.label
 FROM prompts_fts f JOIN prompts p ON p.id = f.rowid
 WHERE prompts_fts MATCH ${sq_q}
   AND (${sq_proj} = '' OR p.project = ${sq_proj})
@@ -160,7 +160,7 @@ if [ "${use_like:-0}" -eq 1 ]; then
   # LIKE fallback
   sq_like="$(sql_quote "%${Q}%")"
   cat > "$sql_tmp" <<SQL
-SELECT id, COALESCE(NULLIF(display_preview, ''), display) AS display, project, ts, pinned
+SELECT id, COALESCE(NULLIF(display_preview, ''), display) AS display, project, ts, pinned, label
 FROM prompts
 WHERE display LIKE ${sq_like}
   AND (${sq_proj} = '' OR project = ${sq_proj})

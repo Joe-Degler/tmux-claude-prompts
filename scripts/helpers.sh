@@ -97,12 +97,12 @@ ensure_db() {
   local ver
   ver="$(sqlite3 "$CP_DB" "PRAGMA user_version;" 2>/dev/null || printf '0')"
   if [ "${ver:-0}" -eq 0 ]; then
-    # Apply schema then bump version to 3 to mark it done.
+    # Apply schema then bump version to 6 to mark it done.
     if ! sqlite3 -bail "$CP_DB" < "$schema_file" >/dev/null; then
       printf 'claude-prompts: failed to apply schema.sql\n' >&2
       exit 2
     fi
-    sqlite3 "$CP_DB" "PRAGMA user_version = 3;" >/dev/null
+    sqlite3 "$CP_DB" "PRAGMA user_version = 6;" >/dev/null
   elif [ "${ver:-0}" -eq 1 ]; then
     # Migrate v1 → v2: add display_preview column. Idempotent: ignore "duplicate" error.
     sqlite3 "$CP_DB" \
@@ -120,5 +120,152 @@ ensure_db() {
       CP_DB="$CP_DB" python3 "${_helpers_dir}/rebuild_previews.py" >&2 || true
     fi
     sqlite3 "$CP_DB" "PRAGMA user_version = 3;" >/dev/null
+    ver=3
+  fi
+  # Re-read the version because the v2→v3 path above bumped it.
+  ver="$(sqlite3 "$CP_DB" "PRAGMA user_version;" 2>/dev/null || printf '0')"
+  if [ "${ver:-0}" -eq 3 ]; then
+    # v3 → v4: introduce groups, group_members, prompts.label, and a 2-column
+    # FTS5 (body, label). Three sqlite3 invocations:
+    #   (1) groups + group_members + index in one transaction
+    #   (2) ALTER TABLE prompts ADD COLUMN label  (idempotent via `|| true`)
+    #   (3) drop+recreate FTS5 with new schema, repopulate, recreate triggers
+    sqlite3 -bail "$CP_DB" >/dev/null <<'SQL_GROUPS'
+PRAGMA foreign_keys = ON;
+CREATE TABLE IF NOT EXISTS groups (
+  id   INTEGER PRIMARY KEY,
+  name TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+  ts   INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS group_members (
+  group_id  INTEGER NOT NULL REFERENCES groups(id)  ON DELETE CASCADE,
+  prompt_id INTEGER NOT NULL REFERENCES prompts(id) ON DELETE CASCADE,
+  ts        INTEGER NOT NULL,
+  PRIMARY KEY (group_id, prompt_id)
+);
+CREATE INDEX IF NOT EXISTS idx_group_members_prompt ON group_members(prompt_id);
+SQL_GROUPS
+
+    # ALTER TABLE in its own invocation so re-running after partial failure
+    # doesn't blow up on "duplicate column".
+    sqlite3 "$CP_DB" \
+      "ALTER TABLE prompts ADD COLUMN label TEXT NULL;" \
+      >/dev/null 2>&1 || true
+
+    sqlite3 -bail "$CP_DB" >/dev/null <<'SQL_FTS'
+DROP TRIGGER IF EXISTS prompts_ai;
+DROP TRIGGER IF EXISTS prompts_ad;
+DROP TRIGGER IF EXISTS prompts_au;
+DROP TRIGGER IF EXISTS prompts_au_label;
+DROP TRIGGER IF EXISTS paste_ai;
+DROP TRIGGER IF EXISTS paste_au;
+DROP TRIGGER IF EXISTS paste_ad;
+DROP TABLE IF EXISTS prompts_fts;
+CREATE VIRTUAL TABLE prompts_fts USING fts5(
+  body,
+  label,
+  tokenize='unicode61 remove_diacritics 2'
+);
+INSERT INTO prompts_fts(rowid, body, label)
+SELECT p.id,
+       p.display || char(10) || COALESCE(
+         (SELECT group_concat(content, char(10)) FROM paste_contents WHERE prompt_id = p.id),
+         ''
+       ),
+       COALESCE(p.label, '')
+FROM prompts p;
+
+CREATE TRIGGER prompts_ai AFTER INSERT ON prompts BEGIN
+  INSERT INTO prompts_fts(rowid, body, label) VALUES (
+    new.id,
+    new.display || char(10) || COALESCE(
+      (SELECT group_concat(content, char(10)) FROM paste_contents WHERE prompt_id = new.id),
+      ''
+    ),
+    COALESCE(new.label, '')
+  );
+END;
+CREATE TRIGGER prompts_ad AFTER DELETE ON prompts BEGIN
+  DELETE FROM prompts_fts WHERE rowid = old.id;
+END;
+CREATE TRIGGER prompts_au AFTER UPDATE OF display ON prompts BEGIN
+  DELETE FROM prompts_fts WHERE rowid = old.id;
+  INSERT INTO prompts_fts(rowid, body, label) VALUES (
+    new.id,
+    new.display || char(10) || COALESCE(
+      (SELECT group_concat(content, char(10)) FROM paste_contents WHERE prompt_id = new.id),
+      ''
+    ),
+    COALESCE(new.label, '')
+  );
+END;
+CREATE TRIGGER prompts_au_label AFTER UPDATE OF label ON prompts BEGIN
+  DELETE FROM prompts_fts WHERE rowid = old.id;
+  INSERT INTO prompts_fts(rowid, body, label) VALUES (
+    new.id,
+    new.display || char(10) || COALESCE(
+      (SELECT group_concat(content, char(10)) FROM paste_contents WHERE prompt_id = new.id),
+      ''
+    ),
+    COALESCE(new.label, '')
+  );
+END;
+CREATE TRIGGER paste_ai AFTER INSERT ON paste_contents BEGIN
+  DELETE FROM prompts_fts WHERE rowid = new.prompt_id;
+  INSERT INTO prompts_fts(rowid, body, label)
+  SELECT p.id,
+         p.display || char(10) || COALESCE(
+           (SELECT group_concat(content, char(10)) FROM paste_contents WHERE prompt_id = p.id),
+           ''
+         ),
+         COALESCE(p.label, '')
+  FROM prompts p WHERE p.id = new.prompt_id;
+END;
+CREATE TRIGGER paste_au AFTER UPDATE ON paste_contents BEGIN
+  DELETE FROM prompts_fts WHERE rowid = new.prompt_id;
+  INSERT INTO prompts_fts(rowid, body, label)
+  SELECT p.id,
+         p.display || char(10) || COALESCE(
+           (SELECT group_concat(content, char(10)) FROM paste_contents WHERE prompt_id = p.id),
+           ''
+         ),
+         COALESCE(p.label, '')
+  FROM prompts p WHERE p.id = new.prompt_id;
+END;
+CREATE TRIGGER paste_ad AFTER DELETE ON paste_contents BEGIN
+  DELETE FROM prompts_fts WHERE rowid = old.prompt_id;
+  INSERT INTO prompts_fts(rowid, body, label)
+  SELECT p.id,
+         p.display || char(10) || COALESCE(
+           (SELECT group_concat(content, char(10)) FROM paste_contents WHERE prompt_id = p.id),
+           ''
+         ),
+         COALESCE(p.label, '')
+  FROM prompts p WHERE p.id = old.prompt_id;
+END;
+PRAGMA user_version = 4;
+SQL_FTS
+    ver=4
+  fi
+  # Re-read in case the v3→v4 path bumped it (or a previous run left us
+  # at v4 and we just need the v5 backfill).
+  ver="$(sqlite3 "$CP_DB" "PRAGMA user_version;" 2>/dev/null || printf '0')"
+  if [ "${ver:-0}" -eq 4 ]; then
+    if command -v python3 >/dev/null 2>&1; then
+      CP_DB="$CP_DB" python3 "${_helpers_dir}/backfill_session_pastes.py" >&2 || true
+    fi
+    sqlite3 "$CP_DB" "PRAGMA user_version = 5;" >/dev/null
+    ver=5
+  fi
+  # v5 → v6: backfill_session_pastes.py grew a paste-cache reader. Re-run
+  # it to pick up rows that v5 left as [Pasted Text Lost] because their
+  # `pastedContents` carried `contentHash` references rather than inline
+  # bodies. Idempotent: rows already repaired no longer match the LIKE.
+  if [ "${ver:-0}" -eq 5 ]; then
+    if command -v python3 >/dev/null 2>&1; then
+      CP_DB="$CP_DB" python3 "${_helpers_dir}/backfill_session_pastes.py" >&2 || true
+    fi
+    sqlite3 "$CP_DB" "PRAGMA user_version = 6;" >/dev/null
+    ver=6
   fi
 }

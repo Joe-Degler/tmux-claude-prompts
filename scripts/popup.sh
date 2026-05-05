@@ -40,6 +40,8 @@ fi
 
 # --- Clear any stale similar-mode state from a previous popup session ---
 rm -f "${CP_RUN_DIR}/similar"
+rm -f "${CP_RUN_DIR}/group"
+rm -f "${CP_RUN_DIR}/cheatsheet"
 
 # --- Initial prompt and header (computed once; refreshed by transform-* binds) ---
 INITIAL_PROMPT="$("${CP_SCRIPTS}/prompt.sh")"
@@ -60,26 +62,28 @@ exec fzf \
   --marker='★' \
   --header="${INITIAL_HEADER}" \
   --header-first \
-  --preview="${CP_SCRIPTS}/preview.sh {1}" \
+  --preview="${CP_SCRIPTS}/cheatsheet_preview.sh {1}" \
   --preview-window='down:30%:wrap' \
   --bind="start:reload($CP_SCRIPTS/dispatch.sh '')" \
   --bind="change:reload($CP_SCRIPTS/dispatch.sh {q})" \
   --bind="enter:execute-silent($CP_SCRIPTS/insert.sh paste {1})+abort" \
   --bind="ctrl-l:execute-silent($CP_SCRIPTS/insert.sh paste-literal {1})+abort" \
   --bind="ctrl-o:execute-silent($CP_SCRIPTS/insert.sh copy {1})+abort" \
-  --bind="ctrl-p:execute-silent($CP_SCRIPTS/pin.sh {1})+reload($CP_SCRIPTS/query.sh {q})" \
+  --bind="ctrl-p:execute-silent($CP_SCRIPTS/pin.sh {1})+reload($CP_SCRIPTS/dispatch.sh {q})" \
+  --bind="ctrl-g:execute($CP_SCRIPTS/group_pick.sh)+reload($CP_SCRIPTS/dispatch.sh {q})+transform-header($CP_SCRIPTS/header.sh)+transform-prompt($CP_SCRIPTS/prompt.sh)" \
+  --bind="ctrl-a:execute($CP_SCRIPTS/action_palette.sh {1})+reload($CP_SCRIPTS/dispatch.sh {q})+transform-header($CP_SCRIPTS/header.sh)+transform-prompt($CP_SCRIPTS/prompt.sh)" \
   --bind="ctrl-s:execute-silent($CP_SCRIPTS/scope.sh toggle)+reload($CP_SCRIPTS/dispatch.sh {q})+transform-header($CP_SCRIPTS/header.sh)" \
   --bind="shift-left:execute-silent($CP_SCRIPTS/scope.sh prev)+reload($CP_SCRIPTS/dispatch.sh {q})+transform-header($CP_SCRIPTS/header.sh)" \
   --bind="shift-right:execute-silent($CP_SCRIPTS/scope.sh next)+reload($CP_SCRIPTS/dispatch.sh {q})+transform-header($CP_SCRIPTS/header.sh)" \
   --bind="ctrl-t:execute-silent($CP_SCRIPTS/case.sh toggle)+reload($CP_SCRIPTS/dispatch.sh {q})+transform-prompt($CP_SCRIPTS/prompt.sh)" \
-  --bind="ctrl-d:execute-silent($CP_SCRIPTS/delete.sh {1})+reload($CP_SCRIPTS/dispatch.sh {q})" \
   --bind="ctrl-r:execute-silent($CP_SCRIPTS/ingest.sh --force)+reload($CP_SCRIPTS/dispatch.sh {q})+transform-header($CP_SCRIPTS/header.sh)" \
   --bind="ctrl-/:execute-silent($CP_SCRIPTS/similar_toggle.sh {1})+reload($CP_SCRIPTS/dispatch.sh {q})+transform-header($CP_SCRIPTS/header.sh)+transform-prompt($CP_SCRIPTS/prompt.sh)" \
-  --bind="?:toggle-preview" \
+  --bind="?:execute-silent($CP_SCRIPTS/cheatsheet_toggle.sh)+refresh-preview" \
   --bind="shift-up:preview-up" \
   --bind="shift-down:preview-down" \
   --bind="alt-up:preview-half-page-up" \
   --bind="alt-down:preview-half-page-down" \
   --bind="ctrl-]:change-preview-window(80%|hidden|down:30%:wrap)" \
-  --bind="esc:abort" \
-  --bind="ctrl-q:abort"
+  --bind="ctrl-q:abort" \
+  --bind="alt-q:abort" \
+  --bind="esc:abort"

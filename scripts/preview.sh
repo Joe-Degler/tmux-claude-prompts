@@ -59,5 +59,12 @@ else rel_time="$(( age_ms/31536000000 ))y ago"; fi
 
 project_base=""; [ -n "$project" ] && project_base="$(basename "$project")"
 
+# Optional label appended to the metadata footer.
+label="$(sqlite3 -cmd ".timeout 3000" "$CP_DB" "SELECT COALESCE(label, '') FROM prompts WHERE id=${id};" 2>/dev/null || true)"
+label_suffix=""
+if [ -n "$label" ]; then
+  label_suffix=" · Label: ${label}"
+fi
+
 printf '\n%s\n' "$FENCE_FOOTER"
-printf '%s\n' "${project_base} · ${rel_time} · ${line_count} lines · ${paste_count} pastes"
+printf '%s\n' "${project_base} · ${rel_time} · ${line_count} lines · ${paste_count} pastes${label_suffix}"

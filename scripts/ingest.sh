@@ -94,8 +94,8 @@ started_from_zero=0
 # Pastes for a source line arrive BEFORE its prompt; bash buffers them
 # in associative arrays so display_preview can substitute the marker.
 current_hash=""
-declare -A pending_paste_content
-declare -A pending_paste_type
+declare -A pending_paste_content=()
+declare -A pending_paste_type=()
 
 clear_pending_pastes() {
   pending_paste_content=()
@@ -163,23 +163,28 @@ process_stream() {
   tail -c "+${seek_pos}" "$HISTORY_FILE" | jq -cR 'fromjson? |
     select(.display != null and .display != "") |
     ((.pastedContents // {}) | to_entries[] |
-      # Claude Code sometimes records hash-only paste references when the
-      # content is deduplicated elsewhere. Those records carry no usable
-      # body, so we skip them here — preview.sh will render the marker as
-      # "(no stored content)" rather than an empty fenced block.
-      select(.value.content != null and .value.content != "") |
+      # Claude Code emits two formats:
+      #   inline:  .value.content  is the full paste body
+      #   cached:  .value.contentHash points to ~/.claude/paste-cache/<hash>.txt
+      # We surface both — the bash loop prefers `content`, falls back to
+      # paste-cache lookup when only `content_hash` is set, and finally
+      # falls back to session-JSONL recovery for genuinely-empty entries.
+      select((.value.content != null and .value.content != "")
+             or (.value.contentHash != null and .value.contentHash != "")) |
       {
         kind: "paste",
         paste_id: (.key | tonumber),
         type: (.value.type // "text"),
-        content: .value.content
+        content: (.value.content // ""),
+        content_hash: (.value.contentHash // "")
       }
     ),
     {
       kind: "prompt",
       display: .display,
       project: (.project // ""),
-      ts: ((.timestamp // 0) | if . == null then 0 else . end)
+      ts: ((.timestamp // 0) | if . == null then 0 else . end),
+      session_id: (.sessionId // "")
     }
   ' 2>/dev/null
 }
@@ -192,13 +197,54 @@ while IFS= read -r line; do
     paste_id="$(printf '%s' "$line" | jq -r '.paste_id')"
     paste_type="$(printf '%s' "$line" | jq -r '.type')"
     content="$(printf '%s' "$line" | jq -r '.content')"
+    content_hash="$(printf '%s' "$line" | jq -r '.content_hash')"
+    # Paste-cache fallback: when `content` is empty but `contentHash` is
+    # set, the paste body lives at ~/.claude/paste-cache/<hash>.txt.
+    # Validate the hash (hex, ≤64 chars) before constructing a path —
+    # never substitute untrusted text into a shell-resolved file path.
+    if [ -z "$content" ] && [ -n "$content_hash" ] && [ "$content_hash" != "null" ]; then
+      if [[ "$content_hash" =~ ^[0-9a-fA-F]{1,64}$ ]]; then
+        cache_file="${HOME}/.claude/paste-cache/${content_hash}.txt"
+        if [ -f "$cache_file" ]; then
+          content="$(cat "$cache_file" 2>/dev/null || printf '')"
+        fi
+      fi
+    fi
     pending_paste_content[$paste_id]="$content"
     pending_paste_type[$paste_id]="$paste_type"
 
   elif [ "$kind" = "prompt" ]; then
     display_full="$(printf '%s' "$line" | jq -r '.display')"
     project="$(printf '%s' "$line" | jq -r '.project')"
-    ts="$(printf '%s' "$line" | jq -r '.ts')"
+    ts_ms="$(printf '%s' "$line" | jq -r '.ts')"
+    ts="$ts_ms"
+    session_id="$(printf '%s' "$line" | jq -r '.session_id')"
+
+    # Session-file fallback: Claude Code now writes empty pastedContents:{}
+    # in history.jsonl, so paste bodies must be recovered from the per-
+    # session JSONL under ~/.claude/projects/<sanitized>/<session_id>.jsonl.
+    # Fire whenever the prompt has paste markers AND nothing was buffered
+    # (covers genuinely-empty pastedContents:{} and the rare case where
+    # entries lack both `content` AND `contentHash`). Cache-miss entries
+    # already populate the buffer with empty strings, so they correctly
+    # bypass this branch and fall through to "[Pasted Text Lost]".
+    if [ "${#pending_paste_content[@]}" -eq 0 ] \
+        && [ -n "$session_id" ] \
+        && [[ "$display_full" == *"[Pasted text #"* ]]; then
+      while IFS= read -r pline; do
+        [ -z "$pline" ] && continue
+        rec_pid="$(printf '%s' "$pline" | jq -r '.paste_id' 2>/dev/null)"
+        rec_type="$(printf '%s' "$pline" | jq -r '.type' 2>/dev/null)"
+        rec_content="$(printf '%s' "$pline" | jq -r '.content' 2>/dev/null)"
+        [ -z "$rec_pid" ] || [ "$rec_pid" = "null" ] && continue
+        pending_paste_content[$rec_pid]="$rec_content"
+        pending_paste_type[$rec_pid]="$rec_type"
+      done < <(python3 "${SCRIPT_DIR}/extract_session_pastes.py" \
+        --display "$display_full" \
+        --project "$project" \
+        --ts "$ts_ms" \
+        --session-id "$session_id" 2>/dev/null)
+    fi
 
     # Collapsed display (newlines → ' ↵ ')
     display="${display_full//$'\n'/ ↵ }"
@@ -225,9 +271,12 @@ while IFS= read -r line; do
     prompt_count=$((prompt_count + 1))
     prompts_in_batch=$((prompts_in_batch + 1))
 
-    # Emit paste INSERTs from the buffer for this prompt.
+    # Emit paste INSERTs from the buffer for this prompt. Skip entries
+    # whose body never resolved (paste-cache miss, etc.) — preview.sh
+    # will render those markers as "[Pasted Text Lost]" instead.
     for pid in "${!pending_paste_content[@]}"; do
       pcontent="${pending_paste_content[$pid]}"
+      [ -z "$pcontent" ] && continue
       ptype="${pending_paste_type[$pid]}"
       sq_pcontent="${pcontent//\'/\'\'}"
       sq_ptype="${ptype//\'/\'\'}"

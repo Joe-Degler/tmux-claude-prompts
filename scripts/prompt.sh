@@ -22,6 +22,13 @@ else
   case_chip=$'\033[38;5;244mAa\033[0m'
 fi
 
+# In group mode, prepend a hash glyph (amber) so the prompt visibly indicates
+# the result set is filtered to a group's members.
+group_glyph=""
+if [ -f "${CP_RUN_DIR}/group" ]; then
+  group_glyph=$'\033[1;38;5;214m#\033[0m '
+fi
+
 # In similar mode, prepend a tilde glyph so the prompt visibly indicates
 # semantic-search instead of lexical search.
 similar_glyph=""
@@ -31,7 +38,7 @@ fi
 
 # Match the query-pointer style used by popup.sh.
 if [ "${GLYPHS[proj]}" = ">" ]; then
-  printf '%s %s> ' "$case_chip" "$similar_glyph"
+  printf '%s %s%s> ' "$case_chip" "$group_glyph" "$similar_glyph"
 else
-  printf '%s %s ' "$case_chip" "$similar_glyph"
+  printf '%s %s%s ' "$case_chip" "$group_glyph" "$similar_glyph"
 fi

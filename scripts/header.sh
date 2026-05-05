@@ -62,6 +62,26 @@ else
 fi
 printf '%b\n' "$title_line"
 
+# --- Group-mode banner (only when $CP_RUN_DIR/group holds a group id) ---
+if [ -f "${CP_RUN_DIR}/group" ]; then
+  grp_id="$(< "${CP_RUN_DIR}/group")"
+  if [ -n "$grp_id" ]; then
+    sq_gid="$(sql_quote "$grp_id")"
+    grp_name="$(sqlite3 -cmd ".timeout 3000" "$CP_DB" \
+      "SELECT name FROM groups WHERE id=${sq_gid};" 2>/dev/null || true)"
+    grp_count="$(sqlite3 -cmd ".timeout 3000" "$CP_DB" \
+      "SELECT count(*) FROM group_members WHERE group_id=${sq_gid};" 2>/dev/null || printf '0')"
+    if [ -n "$grp_name" ]; then
+      max_len=$(( cols - 20 ))
+      [ "$max_len" -lt 10 ] && max_len=10
+      if [ "${#grp_name}" -gt "$max_len" ]; then
+        grp_name="${grp_name:0:$max_len}${GLYPHS[trunc]}"
+      fi
+      printf '%b\n' "$(printf '\033[1;38;5;214m  # Group:\033[0m %s \033[38;5;244m(%s prompts)\033[0m' "$grp_name" "$grp_count")"
+    fi
+  fi
+fi
+
 # --- Similar-mode banner (only when $CP_RUN_DIR/similar holds a source id) ---
 if [ -f "${CP_RUN_DIR}/similar" ]; then
   src_id="$(cat "${CP_RUN_DIR}/similar" 2>/dev/null || true)"
@@ -185,8 +205,10 @@ if [ "$scope" != "everywhere" ]; then
   fi
 fi
 
-# --- Footer hint line (omit if narrow < 70 cols) ---
-if [ "${cols:-80}" -ge 70 ]; then
-  footer="\033[38;5;244m  enter insert  ^l literal  ^p pin  ^o copy  ^t case  ^s scope  S-←/→ cycle  ^/ similar  S-↑/↓ scroll  ^] expand  esc/^q close\033[0m"
+# --- Footer hint line (omit if narrow < 71 cols — full footer width) ---
+# Only the most-used keys are always visible; `?` toggles a full cheatsheet
+# overlay in the preview pane (see scripts/cheatsheet.sh).
+if [ "${cols:-80}" -ge 71 ]; then
+  footer="\033[38;5;244m  enter insert  ^l literal  ^o copy  ^p pin  ^a actions  ?  full keymap\033[0m"
   printf '%b\n' "$footer"
 fi

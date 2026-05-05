@@ -66,7 +66,7 @@ if [ -n "$REFINE_Q" ]; then
 fi
 
 cat >> "$sql_tmp" <<SQL
-SELECT p.id, COALESCE(NULLIF(p.display_preview, ''), p.display) AS display, p.project, p.ts, p.pinned
+SELECT p.id, COALESCE(NULLIF(p.display_preview, ''), p.display) AS display, p.project, p.ts, p.pinned, p.label
 FROM ranked r
 JOIN prompts p ON p.id = r.id
 ${fts_join}

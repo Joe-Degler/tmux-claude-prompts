@@ -2,7 +2,7 @@
 # render.sh — sourced library. Defines cp_render_rows, the formatter shared
 # by query.sh (lexical search) and similar.sh (semantic neighbors).
 #
-# Input on stdin: id<RS>display<RS>project<RS>ts<RS>pinned per row, RS=0x1e.
+# Input on stdin: id<RS>display<RS>project<RS>ts<RS>pinned<RS>label per row, RS=0x1e.
 # Output on stdout: id\x1f<ANSI-rendered-line>\n per row (the fzf format).
 #
 # Honors $CP_SCOPE_FILE to decide whether to render the project chip.
@@ -46,10 +46,10 @@ cp_render_rows() {
   local SHOW_CHIP=0
   [ "$scope" = "everywhere" ] && SHOW_CHIP=1
 
-  local id display project ts pinned
-  local pin_str rec_str chip_str chip_name disp age_ms
+  local id display project ts pinned label
+  local pin_str rec_str chip_str chip_name disp age_ms label_str
 
-  while IFS="$RS" read -r id display project ts pinned; do
+  while IFS="$RS" read -r id display project ts pinned label; do
     [ -z "$id" ] && continue
 
     if [ "${pinned:-0}" = "1" ]; then
@@ -84,11 +84,20 @@ cp_render_rows() {
       chip_str=""
     fi
 
+    label_str=""
+    if [ -n "${label:-}" ]; then
+      # Defensive: strip embedded ESC sequences and clamp to 60 chars so a
+      # malicious / oversized label can't blow up the row.
+      label="${label//$'\033'/}"
+      if [ "${#label}" -gt 60 ]; then label="${label:0:60}"; fi
+      label_str="$(printf '%s[38;5;179m[%s]%s ' "$ESC" "$label" "$RESET")"
+    fi
+
     disp="$display"
     if [ "${#disp}" -gt 500 ]; then
       disp="${disp:0:500}${TRUNC}"
     fi
 
-    printf '%s\x1f%s %s %s%s\n' "$id" "$pin_str" "$rec_str" "$chip_str" "$disp"
+    printf '%s\x1f%s %s %s%s%s\n' "$id" "$pin_str" "$rec_str" "$chip_str" "$label_str" "$disp"
   done
 }
