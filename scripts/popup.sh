@@ -27,8 +27,43 @@ fi
 # --- Ensure DB and apply schema ---
 ensure_db
 
-# --- Incremental ingest (stderr flows to popup terminal so user sees progress) ---
-"${CP_SCRIPTS}/ingest.sh" >&2 || true
+# --- Pick a free port for fzf --listen ---
+# When ingest finishes in the background it pings fzf on this port to reload
+# the result list. Pre-picking the port (vs. letting fzf bind 0) is the only
+# way the BG process can know where to send the notification before fzf has
+# started. There's a tiny TOCTOU window where another process could grab the
+# port; if that happens the notification silently fails and the user falls
+# back to keystroke-driven reload (or Ctrl-R for explicit re-ingest).
+CP_FZF_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()' 2>/dev/null || true)"
+
+# --- Incremental ingest ---
+# Each new history record costs ~150ms (bash loop + jq subprocess thrashing),
+# so a backlog of accumulated rows can block popup open for many seconds.
+# Run ingest in the background so fzf opens immediately with whatever is
+# already in the DB. When ingest finishes, ping fzf via --listen to refresh
+# the visible rows. On a near-empty DB (first launch) we block on ingest so
+# the initial view isn't an empty list.
+prompt_count="$(sqlite3 "$CP_DB" 'SELECT count(*) FROM prompts;' 2>/dev/null || printf '0')"
+if [ "${prompt_count:-0}" -lt 50 ]; then
+  "${CP_SCRIPTS}/ingest.sh" >&2 || true
+else
+  (
+    "${CP_SCRIPTS}/ingest.sh" >>"${CP_RUN_DIR}/ingest.log" 2>&1 || true
+    # Best-effort reload nudge. fzf may not be listening yet (or at all if
+    # the port pick above failed), so we retry briefly and silently give up.
+    if [ -n "${CP_FZF_PORT:-}" ]; then
+      body="reload(${CP_SCRIPTS}/dispatch.sh {q})"
+      for _ in 1 2 3 4 5 6 7 8 9 10; do
+        if exec 9<>/dev/tcp/127.0.0.1/${CP_FZF_PORT} 2>/dev/null; then
+          printf 'POST / HTTP/1.0\r\nContent-Length: %d\r\n\r\n%s' "${#body}" "$body" >&9 2>/dev/null || true
+          exec 9<&- 2>/dev/null || true
+          break
+        fi
+        sleep 0.2
+      done
+    fi
+  ) </dev/null >/dev/null 2>&1 &
+fi
 
 # --- Kick off embedding daemon + async backfill in the background. ---
 # This never blocks popup open. On first run, the daemon spawn / pip install /
@@ -48,7 +83,16 @@ INITIAL_PROMPT="$("${CP_SCRIPTS}/prompt.sh")"
 INITIAL_HEADER="$("${CP_SCRIPTS}/header.sh")"
 
 # --- fzf invocation (exec so this bash process is replaced) ---
+# --listen lets the background ingest job ping us with a `reload` action
+# once the new history rows hit the DB. If port-pick failed earlier the
+# flag is omitted (no listener, nothing to ping).
+listen_flag=()
+if [ -n "${CP_FZF_PORT:-}" ]; then
+  listen_flag=(--listen "$CP_FZF_PORT")
+fi
+
 exec fzf \
+  "${listen_flag[@]}" \
   --disabled \
   --ansi \
   --no-sort \
