@@ -54,7 +54,9 @@ if [ -n "$Q" ]; then
       # Strip chars that aren't alnum, _, -
       clean="$(printf '%s' "$token" | tr -cd 'a-zA-Z0-9_-')"
       if [ -n "$clean" ]; then
-        fts_parts+=("${clean}*")
+        # Quote the token: bare hyphens are FTS5 syntax errors; a quoted
+        # phrase with trailing * keeps prefix matching and handles hyphens.
+        fts_parts+=("\"${clean}\"*")
       fi
     done
 
@@ -149,8 +151,8 @@ WHERE prompts_fts MATCH ${sq_q}
 ORDER BY p.pinned DESC, p.ts DESC
 LIMIT 200;
 SQL
-  rows="$(run_sql "$sql_tmp")"
-  # Check if FTS returned any rows; if empty fall back to LIKE
+  rows="$(run_sql "$sql_tmp")" || rows=""
+  # No rows (or FTS error) → fall back to LIKE
   if [ -z "$rows" ]; then
     use_like=1
   fi

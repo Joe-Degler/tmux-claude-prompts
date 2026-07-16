@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# tests/query.bats — 8 cases testing query.sh behavior.
+# tests/query.bats — 9 cases testing query.sh behavior.
 
 load 'helpers.bash'
 
@@ -106,4 +106,19 @@ and also [Pasted text #2 +2 lines]')"
 
   ids="$(query_ids 'refresh')"
   [[ "$ids" == *"$paste_only_id"* ]]
+}
+
+# Case 9: hyphenated query token must not break the search
+# (bare hyphens are FTS5 syntax errors; query.sh must quote tokens)
+@test "hyphenated query matches" {
+  sqlite3 -cmd '.timeout 3000' "$CP_DB" \
+    "INSERT INTO prompts (display, display_full, project, ts, hash)
+     VALUES ('remove the comment-slop from render.sh',
+             'remove the comment-slop from render.sh',
+             '/opt/development/api-service', 1761930900000, 'hyphen-test-hash');"
+  local hyphen_id
+  hyphen_id="$(db_id_for 'remove the comment-slop from render.sh')"
+
+  ids="$(query_ids 'comment-slop')"
+  [[ "$ids" == *"$hyphen_id"* ]]
 }
