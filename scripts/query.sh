@@ -42,6 +42,13 @@ use_fts=0
 use_like=0
 use_sensitive=0
 
+# Script IFS excludes space, so word-split the query explicitly — otherwise
+# a multi-word query collapses into one (sanitizer-mangled) token.
+q_tokens=()
+if [ -n "$Q" ]; then
+  IFS=$' \t\n' read -r -a q_tokens <<< "$Q"
+fi
+
 if [ -n "$Q" ]; then
   if [ "$case_mode" = "sensitive" ]; then
     # Case-sensitive: skip FTS (its tokenizer normalizes case) and use instr().
@@ -50,7 +57,7 @@ if [ -n "$Q" ]; then
     # Sanitize: keep only alnum, underscore, hyphen; split on whitespace
     # Build FTS query tokens: each token appended with *
     fts_parts=()
-    for token in $Q; do
+    for token in "${q_tokens[@]}"; do
       # Strip chars that aren't alnum, _, -
       clean="$(printf '%s' "$token" | tr -cd 'a-zA-Z0-9_-')"
       if [ -n "$clean" ]; then
@@ -109,7 +116,7 @@ elif [ "$use_sensitive" -eq 1 ]; then
   # Case-sensitive: AND-join token-level instr() checks against display_full
   # and paste_contents.content. instr() is byte-wise (case-sensitive in SQLite).
   where_parts=()
-  for token in $Q; do
+  for token in "${q_tokens[@]}"; do
     [ -z "$token" ] && continue
     sq_tk="$(sql_quote "$token")"
     where_parts+=("(instr(display_full, ${sq_tk}) > 0 OR id IN (SELECT prompt_id FROM paste_contents WHERE instr(content, ${sq_tk}) > 0))")

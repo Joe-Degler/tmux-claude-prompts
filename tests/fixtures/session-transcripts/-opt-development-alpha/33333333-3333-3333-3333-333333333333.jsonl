@@ -1,0 +1,2 @@
+{"type":"user","sessionId":"33333333-3333-3333-3333-333333333333","cwd":"/opt/development/alpha","timestamp":"2026-07-18T11:00:00.000Z","message":{"role":"user","content":"<command-name>/clear</command-name>"}}
+{"type":"user","sessionId":"33333333-3333-3333-3333-333333333333","cwd":"/opt/development/alpha","timestamp":"2026-07-18T11:00:01.000Z","message":{"role":"user","content":"<bash-stdout>only noise here</bash-stdout>"}}

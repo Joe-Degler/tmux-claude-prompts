@@ -22,6 +22,8 @@ Usage:
   claude-prompts insert <paste|paste-literal|copy> <id>  Apply insert action
   claude-prompts group  <list|create <name>|delete <id>|rename <id> <name>>  Manage groups
   claude-prompts label  <id> [<text>]        Set/clear a prompt's short label (≤60 chars)
+  claude-prompts sessions-ingest [--force]   Incremental (or full) session-transcript ingest
+  claude-prompts sessions-query <q>          Emit raw session-mode fzf rows (debug)
   claude-prompts version                     Print version
   claude-prompts help                        Show this message
 
@@ -37,6 +39,8 @@ Popup keymap:
   Ctrl-T     Toggle case sensitivity (Aa chip dim = insensitive, cyan = sensitive)
   Ctrl-/     Toggle similar mode (semantic neighbors of focused row;
              query string further refines via lexical AND-filter)
+  Ctrl-E     Toggle session-search mode (search full transcripts incl. Claude's
+             responses; Enter types /resume <session-id> into the pane)
   Ctrl-R     Force re-ingest from history.jsonl
   ?          Show full keymap (cheatsheet overlay in preview pane)
   Shift-↑/↓  Scroll preview by one line
@@ -112,6 +116,18 @@ case "$subcmd" in
   label)
     shift
     exec "${SCRIPT_DIR}/label_set.sh" "$@"
+    ;;
+
+  sessions-ingest)
+    shift
+    . "${SCRIPT_DIR}/helpers.sh"
+    ensure_db
+    exec python3 "${SCRIPT_DIR}/ingest_sessions.py" "$@"
+    ;;
+
+  sessions-query)
+    q="${2:-}"
+    exec "${SCRIPT_DIR}/session_query.sh" "$q"
     ;;
 
   version)

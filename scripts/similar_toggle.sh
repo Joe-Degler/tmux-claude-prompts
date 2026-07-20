@@ -9,6 +9,9 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/paths.sh"
 
+# Similar mode is a prompt-mode concept; ignore the toggle in session mode.
+[ -f "${CP_RUN_DIR}/sessions" ] && exit 0
+
 ID="${1:-}"
 similar_file="${CP_RUN_DIR}/similar"
 

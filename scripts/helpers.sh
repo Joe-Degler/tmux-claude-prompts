@@ -97,12 +97,12 @@ ensure_db() {
   local ver
   ver="$(sqlite3 "$CP_DB" "PRAGMA user_version;" 2>/dev/null || printf '0')"
   if [ "${ver:-0}" -eq 0 ]; then
-    # Apply schema then bump version to 6 to mark it done.
+    # Apply schema then bump version to 7 to mark it done.
     if ! sqlite3 -bail "$CP_DB" < "$schema_file" >/dev/null; then
       printf 'claude-prompts: failed to apply schema.sql\n' >&2
       exit 2
     fi
-    sqlite3 "$CP_DB" "PRAGMA user_version = 6;" >/dev/null
+    sqlite3 "$CP_DB" "PRAGMA user_version = 7;" >/dev/null
   elif [ "${ver:-0}" -eq 1 ]; then
     # Migrate v1 → v2: add display_preview column. Idempotent: ignore "duplicate" error.
     sqlite3 "$CP_DB" \
@@ -267,5 +267,47 @@ SQL_FTS
     fi
     sqlite3 "$CP_DB" "PRAGMA user_version = 6;" >/dev/null
     ver=6
+  fi
+  # v6 → v7: session-transcript search tables. Same DDL as schema.sql; all
+  # IF NOT EXISTS, so a partial earlier run is safe to repeat.
+  if [ "${ver:-0}" -eq 6 ]; then
+    sqlite3 -bail "$CP_DB" >/dev/null <<'SQL_SESSIONS'
+CREATE TABLE IF NOT EXISTS sessions (
+  id        INTEGER PRIMARY KEY,
+  sid       TEXT    NOT NULL UNIQUE,
+  project   TEXT    NOT NULL DEFAULT '',
+  file      TEXT    NOT NULL,
+  first_ts  INTEGER NOT NULL DEFAULT 0,
+  last_ts   INTEGER NOT NULL DEFAULT 0,
+  msg_count INTEGER NOT NULL DEFAULT 0,
+  title     TEXT    NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_last_ts ON sessions(last_ts DESC);
+CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
+CREATE TABLE IF NOT EXISTS session_messages (
+  id         INTEGER PRIMARY KEY,
+  session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  seq        INTEGER NOT NULL,
+  role       TEXT    NOT NULL CHECK (role IN ('user','assistant','bash','tool')),
+  ts         INTEGER NOT NULL DEFAULT 0,
+  text       TEXT    NOT NULL,
+  UNIQUE (session_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_session_messages_sess ON session_messages(session_id, seq);
+CREATE VIRTUAL TABLE IF NOT EXISTS session_fts USING fts5(
+  body,
+  tokenize='unicode61 remove_diacritics 2'
+);
+CREATE TABLE IF NOT EXISTS session_files (
+  path   TEXT PRIMARY KEY,
+  offset INTEGER NOT NULL DEFAULT 0,
+  mtime  INTEGER NOT NULL DEFAULT 0,
+  dev    INTEGER NOT NULL DEFAULT 0,
+  ino    INTEGER NOT NULL DEFAULT 0,
+  fp     TEXT    NOT NULL DEFAULT ''
+);
+PRAGMA user_version = 7;
+SQL_SESSIONS
+    ver=7
   fi
 }

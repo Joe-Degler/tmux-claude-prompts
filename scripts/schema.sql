@@ -148,4 +148,57 @@ CREATE TRIGGER IF NOT EXISTS paste_ad AFTER DELETE ON paste_contents BEGIN
   FROM prompts p WHERE p.id = old.prompt_id;
 END;
 
-PRAGMA user_version = 6;
+-- Session transcripts: one row per Claude Code session file. sid is the
+-- transcript filename stem (what `/resume <sid>` takes).
+CREATE TABLE IF NOT EXISTS sessions (
+  id        INTEGER PRIMARY KEY,
+  sid       TEXT    NOT NULL UNIQUE,
+  project   TEXT    NOT NULL DEFAULT '',
+  file      TEXT    NOT NULL,
+  first_ts  INTEGER NOT NULL DEFAULT 0,
+  last_ts   INTEGER NOT NULL DEFAULT 0,
+  msg_count INTEGER NOT NULL DEFAULT 0,
+  title     TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_last_ts ON sessions(last_ts DESC);
+CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
+
+-- role 'tool' rows are preview-only: excluded from session_fts and from the
+-- case-sensitive/LIKE search paths.
+CREATE TABLE IF NOT EXISTS session_messages (
+  id         INTEGER PRIMARY KEY,
+  session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  seq        INTEGER NOT NULL,
+  role       TEXT    NOT NULL CHECK (role IN ('user','assistant','bash','tool')),
+  ts         INTEGER NOT NULL DEFAULT 0,
+  text       TEXT    NOT NULL,
+  UNIQUE (session_id, seq)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_messages_sess ON session_messages(session_id, seq);
+
+-- Contentful FTS5, ONE ROW PER SESSION (rowid = sessions.id). Body is the
+-- newline-joined non-tool message text, so multi-token AND queries match
+-- across turns. No triggers: ingest_sessions.py is the sole writer and
+-- refreshes a session's row (delete + reinsert) whenever it appends.
+-- External-content FTS was rejected: 'rebuild' would index tool rows and
+-- the 'delete-all' + delete-trigger sequence corrupts the index.
+CREATE VIRTUAL TABLE IF NOT EXISTS session_fts USING fts5(
+  body,
+  tokenize='unicode61 remove_diacritics 2'
+);
+
+-- Incremental ingest cursor. offset = bytes consumed up to the last complete
+-- newline-terminated record; fp = sha1 of first min(4096, offset) bytes for
+-- in-place-rewrite detection.
+CREATE TABLE IF NOT EXISTS session_files (
+  path   TEXT PRIMARY KEY,
+  offset INTEGER NOT NULL DEFAULT 0,
+  mtime  INTEGER NOT NULL DEFAULT 0,
+  dev    INTEGER NOT NULL DEFAULT 0,
+  ino    INTEGER NOT NULL DEFAULT 0,
+  fp     TEXT    NOT NULL DEFAULT ''
+);
+
+PRAGMA user_version = 7;

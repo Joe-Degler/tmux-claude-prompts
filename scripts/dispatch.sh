@@ -3,6 +3,8 @@
 # Usage: dispatch.sh "<query>"
 #
 # Decision tree (in order):
+#  -1. Session mode active ($CP_RUN_DIR/sessions exists)
+#        → session_query.sh <query>          (transcript search, one row per session)
 #   0. Group mode active ($CP_RUN_DIR/group holds a group id)
 #        → group.sh <gid> <query>            (members of group, query refines)
 #   1. Similar mode active ($CP_RUN_DIR/similar holds an id)
@@ -22,6 +24,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/paths.sh"
 
 Q="${1:-}"
+
+# (-1) Session mode — searches transcripts, not prompts; trumps all others.
+if [ -f "${CP_RUN_DIR}/sessions" ]; then
+  exec "${SCRIPT_DIR}/session_query.sh" "$Q"
+fi
 
 # (0) Group mode — member filter trumps everything else, query refines.
 group_file="${CP_RUN_DIR}/group"

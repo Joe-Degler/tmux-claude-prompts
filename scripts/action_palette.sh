@@ -24,6 +24,9 @@ export CP_SCRIPTS="$SCRIPT_DIR"
 PID="${1:-}"
 VERB="${2:-}"
 
+# Curation verbs are prompt-mode only; no-op before id validation.
+[ -f "${CP_RUN_DIR}/sessions" ] && exit 0
+
 if [ -z "$PID" ] || ! printf '%s' "$PID" | grep -qE '^[0-9]+$'; then
   exit 0
 fi

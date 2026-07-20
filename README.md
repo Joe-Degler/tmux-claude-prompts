@@ -9,6 +9,7 @@ Search, pin, label, and group your Claude Code prompt history from a tmux popup.
 Claude Code's `~/.claude/history.jsonl` grows fast and the prompts you actually want to re-use are buried under throwaways. This plugin keeps the database local and adds:
 
 - **Instant search** across prompt text and pasted blocks (FTS5)
+- **Session search** — a second mode (`Ctrl-E`) that searches full session transcripts, including Claude's responses, and types `/resume <session-id>` into your pane
 - **Semantic similar-mode** to find related prompts even when phrasing differs
 - **Curation** — pin starred prompts, give them labels, organize into groups
 - **Project scoping** — see only the prompts from the cwd you launched from
@@ -83,6 +84,7 @@ The default binding is `Alt+P` in the **root** table — no tmux prefix required
 | `Shift-←/→` | Cycle through every project scope by recency |
 | `Ctrl-T` | Toggle case sensitivity (`Aa` chip dim = insensitive, cyan = sensitive) |
 | `Ctrl-/` | Toggle similar mode — semantic neighbours of the focused row; query string further refines via lexical AND-filter |
+| `Ctrl-E` | Toggle session-search mode — search full transcripts (including Claude's responses); Enter types `/resume <session-id>` |
 
 ### Curation
 
@@ -164,6 +166,23 @@ Groups and labels both persist across re-ingests; deleting a prompt also detache
 
 ---
 
+## Session search
+
+Press `Ctrl-E` to flip the popup into **session mode**: instead of individual prompts, each row is one Claude Code session, searchable by anything either of you said. This is the "which session was that in, and how do I get back" mode.
+
+- **What's indexed:** your prompts, Claude's text responses, and your `!`-prefix bash inputs, from every top-level transcript under `~/.claude/projects/`. Tool calls appear in the preview as compact dim one-liners but are not searchable; tool output, thinking blocks, and subagent transcripts are excluded entirely.
+- **Search semantics:** multi-token queries match across turns — `widget sprocket` finds a session where you said "widget" and Claude answered about "sprockets". Scope (`Ctrl-S`, `Shift-←/→`) and case toggle (`Ctrl-T`) work as in prompt mode; scope cycling only visits projects that actually have sessions (and only prompt-projects in prompt mode). Switching modes while scoped to a project with no rows on the other side falls back to Everywhere.
+- **Preview:** a rendered transcript, opened at the **end** of the conversation (where you stopped), with `>` user turns, `!` bash inputs, and query matches highlighted. Scroll up with the usual preview keys. Long sessions show the last ~400 messages.
+- **Enter** types `/resume <session-id>` into the originating pane — it does not press Enter for you, so you can cd or switch panes first. `Ctrl-O` copies the same string. `Ctrl-L` behaves like Enter here.
+- **Indexing:** runs in the background on popup open (incremental, ~30 ms when nothing changed; the first sweep takes a few seconds). `Ctrl-R` also kicks a re-scan. The header shows `indexing…` while a sweep is running.
+- Pin/group/label keys are inert in session mode — those are prompt-mode concepts.
+
+Two known cosmetic quirks (fzf cannot re-bind keys conditionally): cycling preview size with `Ctrl-]` while in session mode drops the bottom-anchoring until you toggle `Ctrl-E` again, and opening the `?` cheatsheet in session mode may show it bottom-anchored.
+
+Sessions whose transcript files Claude Code has already cleaned up (see its `cleanupPeriodDays` setting) cannot be indexed — only transcripts still on disk are searchable.
+
+---
+
 ## Standalone usage
 
 Outside a tmux session, use the dispatcher directly:
@@ -184,6 +203,8 @@ claude-prompts case  <toggle|get|set <mode>>       Manage case sensitivity
 claude-prompts insert <paste|paste-literal|copy> <id>
 claude-prompts group  <list|create <name>|delete <id>|rename <id> <name>>
 claude-prompts label  <id> [<text>]                Set/clear a prompt label
+claude-prompts sessions-ingest [--force]           Incremental (or full) session-transcript ingest
+claude-prompts sessions-query <search-term>        Emit raw session-mode fzf rows (debug)
 claude-prompts version
 claude-prompts help
 ```
@@ -198,7 +219,9 @@ On Enter, fzf calls `scripts/insert.sh paste <id>`, which fetches `display_full`
 
 The action palette (`Ctrl-A`) is itself a small fzf instance that returns the chosen verb to the outer loop, which then dispatches to the matching script (`group_add.sh`, `label_set.sh`, `delete.sh`).
 
-Mode state files live under `$CP_RUN_DIR` (`/run/user/<uid>/claude-prompts/` by default) — `similar`, `group`, `case`, `scope`, `cheatsheet` — and are cleaned up on popup launch.
+Session mode is driven by `ingest_sessions.py` (stdlib-only Python), which incrementally indexes `~/.claude/projects/*/*.jsonl` with crash-safe byte cursors (only complete, newline-terminated records are consumed; cursor and rows commit in one transaction per file). Search uses a session-level FTS5 document per session so multi-token queries match across turns; `session_query.sh` emits the rows and `session_preview.sh` renders the transcript tail.
+
+Mode state files live under `$CP_RUN_DIR` (`/run/user/<uid>/claude-prompts/` by default) — `similar`, `group`, `case`, `scope`, `cheatsheet`, `sessions` — and are cleaned up on popup launch.
 
 ---
 
@@ -244,6 +267,9 @@ Run `tmux source ~/.tmux.conf`, then verify with `tmux list-keys -T root M-p`. I
 **"your sqlite was built without FTS5" error.**
 Install the system `sqlite3` package (not just `libsqlite3-dev`). On Ubuntu/Debian: `sudo apt-get install sqlite3`. The system package is built with FTS5; the development headers package is not always sufficient.
 
+**Session mode is empty or missing recent sessions.**
+The background indexer may still be running (the header shows `indexing…`). If a session is genuinely absent, its transcript was likely cleaned up by Claude Code already — check `~/.claude/projects/<project-slug>/`. `bin/claude-prompts sessions-ingest --force` rebuilds the session index from what's on disk.
+
 **Group mode won't go away.**
 Press `Ctrl-G` and select the synthetic `(no group — exit group mode)` row at the top of the picker. Or close and reopen the popup — stale mode files are cleared on launch.
 
@@ -258,7 +284,7 @@ npm install -g bats      # or: brew install bats-core
 bats tests/
 ```
 
-54 cases across `ingest`, `query`, `pin`, `insert`, and `groups` suites should pass.
+78 cases across `ingest`, `query`, `pin`, `insert`, `groups`, and `sessions` suites should pass.
 
 ---
 

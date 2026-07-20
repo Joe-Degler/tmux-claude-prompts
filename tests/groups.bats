@@ -16,10 +16,10 @@ db_query() {
   sqlite3 -cmd ".timeout 3000" "$CP_DB" "$1"
 }
 
-# Case 1: schema migration ends at user_version 6 with the expected new tables.
-@test "schema is at user_version 6 with groups + label" {
+# Case 1: schema migration ends at user_version 7 with the expected new tables.
+@test "schema is at user_version 7 with groups + label" {
   ver="$(db_query 'PRAGMA user_version;')"
-  [ "$ver" = "6" ]
+  [ "$ver" = "7" ]
 
   has_groups="$(db_query "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='groups';")"
   [ "$has_groups" = "1" ]

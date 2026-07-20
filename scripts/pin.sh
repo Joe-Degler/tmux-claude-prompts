@@ -11,6 +11,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 require_dep sqlite3
 
+# Session rows can't be pinned; no-op before id validation (ids are uuids there).
+[ -f "${CP_RUN_DIR}/sessions" ] && exit 0
+
 id="${1:-}"
 
 # Validate: must be a non-empty integer

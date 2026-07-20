@@ -32,11 +32,21 @@ else
   proj_filter="$scope"
 fi
 
-# --- Count prompts in current scope ---
+# --- Session mode? Row counts and title adapt. ---
+session_mode=0
+[ -f "${CP_RUN_DIR}/sessions" ] && session_mode=1
+
+# --- Count rows in current scope ---
 sq_proj="$(sql_quote "$proj_filter")"
-count="$(sqlite3 -cmd ".timeout 3000" "$CP_DB" \
-  "SELECT count(*) FROM prompts WHERE (${sq_proj} = '' OR project = ${sq_proj});" \
-  2>/dev/null || printf '0')"
+if [ "$session_mode" -eq 1 ]; then
+  count="$(sqlite3 -cmd ".timeout 3000" "$CP_DB" \
+    "SELECT count(*) FROM sessions WHERE (${sq_proj} = '' OR project = ${sq_proj});" \
+    2>/dev/null || printf '0')"
+else
+  count="$(sqlite3 -cmd ".timeout 3000" "$CP_DB" \
+    "SELECT count(*) FROM prompts WHERE (${sq_proj} = '' OR project = ${sq_proj});" \
+    2>/dev/null || printf '0')"
+fi
 
 # --- ANSI helper ---
 ansi() {
@@ -53,12 +63,20 @@ count_str="$(ansi 244 "  ${count}")"
 # --- Title line ---
 # In Everywhere mode, show the [Everywhere] label inline (no chip strip below).
 # In project mode, omit the label — the chip strip below shows the active scope.
+title_text="Claude Prompts"
+indexing_str=""
+if [ "$session_mode" -eq 1 ]; then
+  title_text="Claude Sessions"
+  if [ "$(cat "${CP_RUN_DIR}/session_ingest_status" 2>/dev/null || true)" = "running" ]; then
+    indexing_str="$(ansi 244 "  indexing${GLYPHS[trunc]}")"
+  fi
+fi
 if [ "$scope" = "everywhere" ]; then
   scope_icon="$(ansi "${GLYPH_COLOR[globe]}" "${GLYPHS[globe]}")"
   scope_label="$(ansi 243 "[Everywhere]")"
-  title_line="  \033[1mClaude Prompts\033[0m   ${scope_icon} ${scope_label}${count_str}"
+  title_line="  \033[1m${title_text}\033[0m   ${scope_icon} ${scope_label}${count_str}${indexing_str}"
 else
-  title_line="  \033[1mClaude Prompts\033[0m${count_str}"
+  title_line="  \033[1m${title_text}\033[0m${count_str}${indexing_str}"
 fi
 printf '%b\n' "$title_line"
 
@@ -209,6 +227,10 @@ fi
 # Only the most-used keys are always visible; `?` toggles a full cheatsheet
 # overlay in the preview pane (see scripts/cheatsheet.sh).
 if [ "${cols:-80}" -ge 71 ]; then
-  footer="\033[38;5;244m  enter insert  ^l literal  ^o copy  ^p pin  ^a actions  ?  full keymap\033[0m"
+  if [ "$session_mode" -eq 1 ]; then
+    footer="\033[38;5;244m  enter type /resume  ^o copy /resume  ^e back to prompts  ?  full keymap\033[0m"
+  else
+    footer="\033[38;5;244m  enter insert  ^l literal  ^o copy  ^p pin  ^a actions  ?  full keymap\033[0m"
+  fi
   printf '%b\n' "$footer"
 fi

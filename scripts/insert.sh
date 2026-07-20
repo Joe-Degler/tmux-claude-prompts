@@ -25,6 +25,17 @@ case "$action" in
     ;;
 esac
 
+# --- Session mode: the payload is the /resume command, for every action. ---
+# Must run before numeric validation — session ids are uuids.
+unmatched_markers=0
+if [ -f "${CP_RUN_DIR}/sessions" ]; then
+  if [ -z "$id" ] || ! printf '%s' "$id" | grep -qE '^[0-9a-fA-F-]{8,}$'; then
+    printf 'insert.sh: invalid session id: %s\n' "$id" >&2
+    exit 1
+  fi
+  text="/resume ${id}"
+else
+
 # --- Validate id ---
 if [ -z "$id" ] || ! printf '%s' "$id" | grep -qE '^[0-9]+$'; then
   printf 'insert.sh: invalid id: %s\n' "$id" >&2
@@ -34,7 +45,6 @@ fi
 ensure_db
 
 # --- Fetch text ---
-unmatched_markers=0
 if [ "$action" = "paste-literal" ]; then
   text="$(sqlite3 -cmd ".timeout 3000" "$CP_DB" \
     "SELECT display_full FROM prompts WHERE id=${id};" 2>/dev/null)"
@@ -45,6 +55,8 @@ else
     [ "$rc" -eq 2 ] && unmatched_markers=1 || exit "$rc"
   }
 fi
+
+fi # end prompt-mode branch
 
 # --- Paste into tmux pane ---
 do_clipboard=0

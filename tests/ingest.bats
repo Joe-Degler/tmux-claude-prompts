@@ -187,9 +187,9 @@ body-1-line-b" ]
     ensure_db
   )
 
-  # Assert: user_version bumped through v4→v5→v6
+  # Assert: user_version bumped through v4→v5→v6→v7
   ver="$(db_query 'PRAGMA user_version;')"
-  [ "$ver" = "6" ]
+  [ "$ver" = "7" ]
 
   # Assert: row's preview no longer contains [Pasted Text Lost] and now
   # carries the recovered body text.
@@ -259,7 +259,7 @@ cached-body-line-3" ]
   )
 
   ver="$(db_query 'PRAGMA user_version;')"
-  [ "$ver" = "6" ]
+  [ "$ver" = "7" ]
 
   preview_after="$(db_query "SELECT display_preview FROM prompts WHERE ts = ${ts};")"
   [[ "$preview_after" != *"[Pasted Text Lost]"* ]]
@@ -309,9 +309,9 @@ SHIM
     ensure_db
   )
 
-  # Final state must be v6.
+  # Final state must be v7.
   ver="$(db_query 'PRAGMA user_version;')"
-  [ "$ver" = "6" ]
+  [ "$ver" = "7" ]
 
   # The log must contain TWO invocations: the first sees user_version=4
   # (proving the v4→v5 path fired), the second sees user_version=5

@@ -36,9 +36,16 @@ if [ -f "${CP_RUN_DIR}/similar" ]; then
   similar_glyph=$'\033[1;38;5;81m~\033[0m '
 fi
 
+# In session mode, prepend an @ glyph (magenta) — searching transcripts,
+# not prompts.
+session_glyph=""
+if [ -f "${CP_RUN_DIR}/sessions" ]; then
+  session_glyph=$'\033[1;38;5;170m@\033[0m '
+fi
+
 # Match the query-pointer style used by popup.sh.
 if [ "${GLYPHS[proj]}" = ">" ]; then
-  printf '%s %s%s> ' "$case_chip" "$group_glyph" "$similar_glyph"
+  printf '%s %s%s%s> ' "$case_chip" "$session_glyph" "$group_glyph" "$similar_glyph"
 else
-  printf '%s %s%s ' "$case_chip" "$group_glyph" "$similar_glyph"
+  printf '%s %s%s%s ' "$case_chip" "$session_glyph" "$group_glyph" "$similar_glyph"
 fi

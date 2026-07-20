@@ -35,13 +35,26 @@ if [ -f "${CP_CASE_FILE:-${CP_RUN_DIR}/case}" ]; then
   fi
 fi
 
+session_mode=0
+[ -f "${CP_RUN_DIR}/sessions" ] && session_mode=1
+sessions_label="enter session-search mode (transcripts incl. Claude)"
+enter_label="insert resolved prompt into pane"
+ctrl_l_label="insert literal (with paste markers)"
+ctrl_o_label="copy resolved prompt to clipboard"
+if [ "$session_mode" -eq 1 ]; then
+  sessions_label="back to prompt mode"
+  enter_label="type /resume <session-id> into pane (does not run it)"
+  ctrl_l_label="same as Enter in session mode"
+  ctrl_o_label="copy /resume <session-id> to clipboard"
+fi
+
 # --- Render ---
 printf '\n  %sCLAUDE PROMPTS%s — keymap\n\n' "$TITLE" "$RESET"
 
 printf '  %sOutput%s\n' "$SECTION" "$RESET"
-printf '    %sEnter%s        insert resolved prompt into pane\n' "$BOLD" "$RESET"
-printf '    %sCtrl-L%s       insert literal (with paste markers)\n' "$BOLD" "$RESET"
-printf '    %sCtrl-O%s       copy resolved prompt to clipboard\n' "$BOLD" "$RESET"
+printf '    %sEnter%s        %s\n' "$BOLD" "$RESET" "$enter_label"
+printf '    %sCtrl-L%s       %s\n' "$BOLD" "$RESET" "$ctrl_l_label"
+printf '    %sCtrl-O%s       %s\n' "$BOLD" "$RESET" "$ctrl_o_label"
 printf '\n'
 
 printf '  %sPer-row%s\n' "$SECTION" "$RESET"
@@ -51,6 +64,7 @@ printf '    %sCtrl-A%s       row actions (group-add · label · delete)\n' "$BOL
 printf '\n'
 
 printf '  %sSearch modes%s\n' "$SECTION" "$RESET"
+printf '    %sCtrl-E%s       %s\n' "$BOLD" "$RESET" "$sessions_label"
 printf '    %sCtrl-/%s       %s\n' "$BOLD" "$RESET" "$similar_label"
 printf '    %sCtrl-T%s       %s\n' "$BOLD" "$RESET" "$case_label"
 printf '    %sCtrl-S%s       toggle scope (everywhere ↔ project)\n' "$BOLD" "$RESET"

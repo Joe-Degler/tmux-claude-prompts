@@ -19,6 +19,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 group_file="${CP_RUN_DIR}/group"
 
+# Groups are prompt-mode collections; ignore the picker in session mode.
+[ -f "${CP_RUN_DIR}/sessions" ] && exit 0
+
 # --- Non-interactive: --exit unconditionally clears group mode. ---
 if [ "${1:-}" = "--exit" ]; then
   rm -f "$group_file"

@@ -84,12 +84,21 @@ case "$cmd" in
 
   list)
     # Ordered scope list: "everywhere" first, then each distinct project
-    # ordered by most-recent prompt timestamp. Used by next/prev cycling
-    # and by header.sh to render the chip strip.
+    # ordered by most-recent activity. Mode-aware: in session mode only
+    # projects that actually have sessions are cyclable (and vice versa),
+    # so Shift-arrows never walk through scopes with zero rows.
     printf 'everywhere\n'
-    sqlite3 -cmd ".timeout 3000" "$CP_DB" \
-      "SELECT project FROM prompts WHERE project IS NOT NULL AND project <> '' GROUP BY project ORDER BY MAX(ts) DESC;" \
-      2>/dev/null || true
+    if [ -f "${CP_RUN_DIR}/sessions" ]; then
+      sqlite3 -cmd ".timeout 3000" "$CP_DB" \
+        "SELECT project FROM sessions WHERE project <> ''
+         GROUP BY project ORDER BY MAX(last_ts) DESC;" \
+        2>/dev/null || true
+    else
+      sqlite3 -cmd ".timeout 3000" "$CP_DB" \
+        "SELECT project FROM prompts WHERE project IS NOT NULL AND project <> ''
+         GROUP BY project ORDER BY MAX(ts) DESC;" \
+        2>/dev/null || true
+    fi
     ;;
 
   next|prev)
